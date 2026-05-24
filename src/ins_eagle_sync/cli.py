@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .config import load_config
 from .gallerydl_runner import run_gallery_dl
+from .metadata_parser import scan_staging_dir
 from .utils import detect_instagram_url
 
 
@@ -25,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Run gallery-dl for an author, post, or reel URL.")
     run_parser.add_argument("url")
     run_parser.add_argument("--dry-run", action="store_true", help="Print the gallery-dl command without running it.")
+
+    parse_staging_parser = subparsers.add_parser("parse-staging", help="Parse staged media and metadata.")
+    parse_staging_parser.add_argument("staging_dir")
 
     sync_parser = subparsers.add_parser("sync", help="Author sync mode placeholder.")
     sync_parser.add_argument("url")
@@ -50,6 +54,26 @@ def main(argv: list[str] | None = None) -> int:
                     "username": info.username,
                     "shortcode": info.shortcode,
                 },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "parse-staging":
+        items = scan_staging_dir(Path(args.staging_dir))
+        print(
+            json.dumps(
+                [
+                    {
+                        "file_path": str(item.file_path),
+                        "title": item.title,
+                        "website": item.website,
+                        "tags": item.tags,
+                        "unique_key": item.unique_key,
+                    }
+                    for item in items
+                ],
                 ensure_ascii=False,
                 indent=2,
             )

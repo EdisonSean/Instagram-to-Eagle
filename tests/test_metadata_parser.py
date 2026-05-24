@@ -1,9 +1,17 @@
 import sys
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ins_eagle_sync.metadata_parser import parse_metadata_item
+from ins_eagle_sync.metadata_parser import (
+    build_import_title,
+    parse_metadata_item,
+    scan_staging_dir,
+)
+
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_parse_metadata_item_normalizes_common_fields(project_tmp_path):
@@ -26,3 +34,102 @@ def test_parse_metadata_item_normalizes_common_fields(project_tmp_path):
     assert result.author == "author"
     assert result.local_file == project_tmp_path / "image.jpg"
     assert result.hashtags == ["tag"]
+
+
+def test_parse_gallery_dl_instagram_fields_prefers_post_shortcode(project_tmp_path):
+    metadata = json.loads((FIXTURES_DIR / "instagram_sidecar_item.json").read_text(encoding="utf-8"))
+    file_path = project_tmp_path / "unknown" / "DYld7hQCT90" / "media_02.jpg"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_bytes(b"fake image")
+    metadata_path = Path(str(file_path) + ".json")
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    result = parse_metadata_item(
+        metadata,
+        metadata_path,
+        file_path=file_path,
+        staging_dir=project_tmp_path,
+    )
+
+    assert result.file_path == file_path
+    assert result.username == "quinn.xyz"
+    assert result.shortcode == "DYld7hQCT90"
+    assert result.media_index == 2
+    assert result.website == "https://www.instagram.com/p/DYld7hQCT90/"
+    assert result.title == "A calm city walk #Tr ｜ DYld7hQCT90_02"
+    assert result.unique_key == "instagram:quinn.xyz:DYld7hQCT90:02"
+    assert result.tags == [
+        "instagram",
+        "author:quinn.xyz",
+        "shortcode:DYld7hQCT90",
+        "travel",
+        "night",
+    ]
+    assert "作者: quinn.xyz" in result.annotation
+    assert "日期: 2026-01-15 08:30:00" in result.annotation
+    assert "Shortcode: DYld7hQCT90" in result.annotation
+    assert "序号: 02" in result.annotation
+    assert "来源 URL: https://www.instagram.com/p/DYld7hQCT90/" in result.annotation
+    assert "Caption 全文:" in result.annotation
+    assert "A calm city walk #Travel #Night #travel" in result.annotation
+
+
+def test_scan_staging_dir_finds_media_and_matching_metadata(project_tmp_path):
+    metadata = json.loads((FIXTURES_DIR / "instagram_sidecar_item.json").read_text(encoding="utf-8"))
+    media_path = project_tmp_path / "unknown" / "DYld7hQCT90" / "media_02.jpg"
+    media_path.parent.mkdir(parents=True)
+    media_path.write_bytes(b"fake image")
+    Path(str(media_path) + ".json").write_text(json.dumps(metadata), encoding="utf-8")
+    (media_path.parent / "ignored.txt").write_text("ignore me", encoding="utf-8")
+
+    items = scan_staging_dir(project_tmp_path)
+
+    assert len(items) == 1
+    assert items[0].file_path == media_path
+    assert items[0].shortcode == "DYld7hQCT90"
+    assert items[0].media_index == 2
+
+
+def test_scan_staging_dir_uses_path_fallbacks_without_metadata(project_tmp_path):
+    media_path = project_tmp_path / "unknown" / "FALLBACK1" / "photo_03.mp4"
+    media_path.parent.mkdir(parents=True)
+    media_path.write_bytes(b"fake video")
+
+    items = scan_staging_dir(project_tmp_path)
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.file_path == media_path
+    assert item.username == "unknown"
+    assert item.shortcode == "FALLBACK1"
+    assert item.media_index == 3
+    assert item.caption == ""
+    assert item.title == "FALLBACK1 ｜ FALLBACK1_03"
+    assert item.website == "https://www.instagram.com/p/FALLBACK1/"
+    assert item.unique_key == "instagram:unknown:FALLBACK1:03"
+    assert item.tags == ["instagram", "author:unknown", "shortcode:FALLBACK1"]
+
+
+def test_parse_metadata_item_supports_nested_user_and_title_fallback(project_tmp_path):
+    item = {
+        "profile": {"username": "nested.author"},
+        "shortcode_id": "POST999",
+        "title": "Title caption #Art",
+        "datetime": "2026-02-03T04:05:06",
+        "index": "4",
+    }
+    media_path = project_tmp_path / "nested" / "POST999" / "asset_04.webp"
+    media_path.parent.mkdir(parents=True)
+    media_path.write_bytes(b"fake image")
+
+    result = parse_metadata_item(item, file_path=media_path, staging_dir=project_tmp_path)
+
+    assert result.username == "nested.author"
+    assert result.shortcode == "POST999"
+    assert result.media_index == 4
+    assert result.caption == "Title caption #Art"
+    assert "art" in result.tags
+
+
+def test_build_import_title_uses_shortcode_when_caption_is_empty():
+    assert build_import_title("", "ABC123", 1) == "ABC123 ｜ ABC123_01"
