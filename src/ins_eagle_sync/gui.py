@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
 import threading
 import traceback
+from copy import deepcopy
 from pathlib import Path
+from tkinter import filedialog
 from typing import Any, Callable
 
 try:
@@ -21,6 +24,34 @@ DEFAULT_CONFIG_PATH = "config.json"
 EXAMPLE_CONFIG_PATH = "config.example.json"
 MODE_POST = "单帖 sync-post"
 MODE_AUTHOR = "作者 sync-author"
+SYNC_TAB_NAME = "同步"
+SETTINGS_TAB_NAME = "设置"
+DEFAULT_FOLDER_PATH = "Instagram/quinn.xyz"
+
+DEFAULT_CONFIG_DATA: dict[str, Any] = {
+    "gallery_dl_executable": "py -m gallery_dl",
+    "staging_dir": "E:/INS_Eagle_Sync/_staging",
+    "archive_db": "E:/INS_Eagle_Sync/_cache/gallery-dl-archive.sqlite3",
+    "imported_state": "E:/INS_Eagle_Sync/_cache/eagle-imported.json",
+    "eagle_api_base": "http://localhost:41595",
+    "default_eagle_root_folder": DEFAULT_FOLDER_PATH,
+    "title_caption_chars": 70,
+    "proxy": {
+        "enabled": True,
+        "http_proxy": "http://127.0.0.1:10809",
+        "https_proxy": "http://127.0.0.1:10809",
+    },
+    "cookies": {
+        "enabled": False,
+        "from_browser": "",
+        "file": "E:/INS_Eagle_Sync/_cache/instagram-cookies.txt",
+    },
+    "download": {
+        "sleep_request": "8-15",
+        "max_posts": 50,
+    },
+}
+
 _BaseWindow = ctk.CTk if ctk is not None else object
 
 
@@ -28,12 +59,14 @@ class InsEagleSyncApp(_BaseWindow):
     def __init__(self) -> None:
         super().__init__()
         self.title("ins-eagle-sync")
-        self.geometry("980x720")
-        self.minsize(860, 620)
+        self.geometry("1040x760")
+        self.minsize(900, 660)
 
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker: threading.Thread | None = None
-        self.config_path = resolve_config_path(DEFAULT_CONFIG_PATH)
+        self.setting_entries: dict[str, Any] = {}
+        self.config_path = ensure_config_file(DEFAULT_CONFIG_PATH, EXAMPLE_CONFIG_PATH)
+        self.config_data = load_config_data(self.config_path)
         self.config = self._load_config()
 
         self._build_layout()
@@ -42,9 +75,21 @@ class InsEagleSyncApp(_BaseWindow):
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        header = ctk.CTkFrame(self, corner_radius=0)
+        self.tabview = ctk.CTkTabview(self)
+        self.tabview.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self.sync_tab = self.tabview.add(SYNC_TAB_NAME)
+        self.settings_tab = self.tabview.add(SETTINGS_TAB_NAME)
+
+        self._build_sync_tab(self.sync_tab)
+        self._build_settings_tab(self.settings_tab)
+
+    def _build_sync_tab(self, parent: Any) -> None:
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(3, weight=1)
+
+        header = ctk.CTkFrame(parent, corner_radius=0)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_columnconfigure(1, weight=1)
 
@@ -52,7 +97,7 @@ class InsEagleSyncApp(_BaseWindow):
         self.url_entry = ctk.CTkEntry(header)
         self.url_entry.grid(row=0, column=1, padx=(0, 16), pady=14, sticky="ew")
 
-        options = ctk.CTkFrame(self, corner_radius=0)
+        options = ctk.CTkFrame(parent, corner_radius=0)
         options.grid(row=1, column=0, sticky="ew", padx=16, pady=(14, 8))
         options.grid_columnconfigure(1, weight=1)
         options.grid_columnconfigure(3, weight=0)
@@ -69,7 +114,7 @@ class InsEagleSyncApp(_BaseWindow):
         self.folder_path_entry = ctk.CTkEntry(options)
         self.folder_path_entry.grid(row=1, column=1, columnspan=3, pady=8, sticky="ew")
 
-        toggles = ctk.CTkFrame(self, corner_radius=0)
+        toggles = ctk.CTkFrame(parent, corner_radius=0)
         toggles.grid(row=2, column=0, sticky="ew", padx=16, pady=8)
         for column in range(5):
             toggles.grid_columnconfigure(column, weight=1)
@@ -96,10 +141,10 @@ class InsEagleSyncApp(_BaseWindow):
             row=0, column=4, padx=4, pady=8, sticky="w"
         )
 
-        self.log_text = ctk.CTkTextbox(self, wrap="word")
+        self.log_text = ctk.CTkTextbox(parent, wrap="word")
         self.log_text.grid(row=3, column=0, sticky="nsew", padx=16, pady=(8, 12))
 
-        actions = ctk.CTkFrame(self, corner_radius=0)
+        actions = ctk.CTkFrame(parent, corner_radius=0)
         actions.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
         actions.grid_columnconfigure(4, weight=1)
 
@@ -112,16 +157,166 @@ class InsEagleSyncApp(_BaseWindow):
         self.open_staging_button = ctk.CTkButton(actions, text="打开 staging 目录", command=self.open_staging_dir)
         self.open_staging_button.grid(row=0, column=3, padx=8, pady=8)
 
+    def _build_settings_tab(self, parent: Any) -> None:
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+        panel = ctk.CTkScrollableFrame(parent, corner_radius=0)
+        panel.grid(row=0, column=0, sticky="nsew", padx=16, pady=16)
+        panel.grid_columnconfigure(1, weight=1)
+
+        self._add_setting_row(panel, 0, "cookies.txt 路径", "cookies_file", "选择文件", self.choose_cookies_file)
+        self._add_setting_row(panel, 1, "staging_dir", "staging_dir", "选择目录", self.choose_staging_dir)
+        self._add_setting_row(panel, 2, "archive_db", "archive_db")
+        self._add_setting_row(panel, 3, "imported_state", "imported_state")
+        self._add_setting_row(panel, 4, "Eagle API base", "eagle_api_base")
+        self._add_setting_row(panel, 5, "默认 Eagle folder path", "default_folder_path")
+        self._add_setting_row(panel, 6, "HTTP proxy", "http_proxy")
+        self._add_setting_row(panel, 7, "HTTPS proxy", "https_proxy")
+        self._add_setting_row(panel, 8, "默认 max posts", "max_posts")
+        self._add_setting_row(panel, 9, "默认 sleep request", "sleep_request")
+
+        actions = ctk.CTkFrame(panel, corner_radius=0)
+        actions.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(18, 6))
+        actions.grid_columnconfigure(2, weight=1)
+        self.save_settings_button = ctk.CTkButton(actions, text="保存设置", command=self.save_settings)
+        self.save_settings_button.grid(row=0, column=0, padx=(0, 8), pady=8)
+        self.reload_settings_button = ctk.CTkButton(actions, text="重新加载", command=self.reload_settings)
+        self.reload_settings_button.grid(row=0, column=1, padx=8, pady=8)
+
+    def _add_setting_row(
+        self,
+        parent: Any,
+        row: int,
+        label: str,
+        key: str,
+        button_text: str | None = None,
+        button_command: Callable[[], None] | None = None,
+    ) -> None:
+        ctk.CTkLabel(parent, text=label).grid(row=row, column=0, padx=(0, 10), pady=8, sticky="w")
+        entry = ctk.CTkEntry(parent)
+        entry.grid(row=row, column=1, pady=8, sticky="ew")
+        self.setting_entries[key] = entry
+        if button_text and button_command:
+            button = ctk.CTkButton(parent, text=button_text, width=96, command=button_command)
+            button.grid(row=row, column=2, padx=(10, 0), pady=8, sticky="e")
+
     def _set_default_values(self) -> None:
         self.mode.set(MODE_POST)
-        self.folder_path_entry.insert(0, "Instagram/quinn.xyz")
-        self.max_posts_entry.insert(0, str(self.config.download.max_posts))
+        self._set_entry(self.folder_path_entry, get_config_value(self.config_data, "default_folder_path"))
+        self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
+        self._populate_settings_form()
 
     def _load_config(self) -> AppConfig:
         try:
             return load_config(self.config_path)
         except Exception as exc:  # noqa: BLE001 - visible GUI error, then re-raise to prevent half-init.
             raise RuntimeError(f"Failed to load config from {self.config_path}: {exc}") from exc
+
+    def _populate_settings_form(self) -> None:
+        values = {
+            "cookies_file": get_config_value(self.config_data, "cookies_file"),
+            "staging_dir": get_config_value(self.config_data, "staging_dir"),
+            "archive_db": get_config_value(self.config_data, "archive_db"),
+            "imported_state": get_config_value(self.config_data, "imported_state"),
+            "eagle_api_base": get_config_value(self.config_data, "eagle_api_base"),
+            "default_folder_path": get_config_value(self.config_data, "default_folder_path"),
+            "http_proxy": get_config_value(self.config_data, "http_proxy"),
+            "https_proxy": get_config_value(self.config_data, "https_proxy"),
+            "max_posts": str(get_config_value(self.config_data, "max_posts")),
+            "sleep_request": get_config_value(self.config_data, "sleep_request"),
+        }
+        for key, value in values.items():
+            self._set_entry(self.setting_entries[key], str(value or ""))
+
+    def choose_cookies_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="选择 cookies.txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if path:
+            self._set_entry(self.setting_entries["cookies_file"], path)
+
+    def choose_staging_dir(self) -> None:
+        path = filedialog.askdirectory(title="选择 staging 目录")
+        if path:
+            self._set_entry(self.setting_entries["staging_dir"], path)
+
+    def save_settings(self) -> None:
+        try:
+            data = self._collect_settings_data()
+            if data is None:
+                return
+            write_config_data(data, DEFAULT_CONFIG_PATH)
+            self.config_path = Path(DEFAULT_CONFIG_PATH)
+            self.config_data = load_config_data(self.config_path)
+            self.config = self._load_config()
+            self._populate_settings_form()
+            self._set_entry(self.folder_path_entry, get_config_value(self.config_data, "default_folder_path"))
+            self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
+            self._append_log("settings saved to config.json")
+            self._warn_about_cookies()
+        except Exception as exc:  # noqa: BLE001 - user-facing GUI error.
+            self._append_log(f"error: failed to save settings: {exc}")
+
+    def reload_settings(self) -> None:
+        try:
+            self.config_path = ensure_config_file(DEFAULT_CONFIG_PATH, EXAMPLE_CONFIG_PATH)
+            self.config_data = load_config_data(self.config_path)
+            self.config = self._load_config()
+            self._populate_settings_form()
+            self._set_entry(self.folder_path_entry, get_config_value(self.config_data, "default_folder_path"))
+            self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
+            self._append_log(f"settings reloaded from {self.config_path}")
+        except Exception as exc:  # noqa: BLE001 - user-facing GUI error.
+            self._append_log(f"error: failed to reload settings: {exc}")
+
+    def _collect_settings_data(self) -> dict[str, Any] | None:
+        eagle_api_base = self._setting_value("eagle_api_base")
+        folder_path = self._setting_value("default_folder_path")
+        max_posts_text = self._setting_value("max_posts")
+        sleep_request = self._setting_value("sleep_request")
+
+        if not eagle_api_base:
+            self._append_log("error: Eagle API base is required.")
+            return None
+        if not folder_path:
+            self._append_log("error: default Eagle folder path is required.")
+            return None
+        if not sleep_request:
+            self._append_log("error: default sleep request is required.")
+            return None
+        try:
+            max_posts = int(max_posts_text)
+        except ValueError:
+            self._append_log("error: default max posts must be an integer.")
+            return None
+        if max_posts <= 0:
+            self._append_log("error: default max posts must be greater than 0.")
+            return None
+
+        data = normalize_config_data(self.config_data)
+        cookies_file = self._setting_value("cookies_file")
+        http_proxy = self._setting_value("http_proxy")
+        https_proxy = self._setting_value("https_proxy")
+
+        data["staging_dir"] = self._setting_value("staging_dir")
+        data["archive_db"] = self._setting_value("archive_db")
+        data["imported_state"] = self._setting_value("imported_state")
+        data["eagle_api_base"] = eagle_api_base.rstrip("/")
+        data["default_eagle_root_folder"] = folder_path
+        data["cookies"]["enabled"] = bool(cookies_file)
+        data["cookies"]["from_browser"] = ""
+        data["cookies"]["file"] = cookies_file
+        data["proxy"]["enabled"] = bool(http_proxy or https_proxy)
+        data["proxy"]["http_proxy"] = http_proxy
+        data["proxy"]["https_proxy"] = https_proxy
+        data["download"]["max_posts"] = max_posts
+        data["download"]["sleep_request"] = sleep_request
+        return data
+
+    def _setting_value(self, key: str) -> str:
+        return self.setting_entries[key].get().strip()
 
     def preview(self) -> None:
         self._run_sync_task(force_dry_run=True)
@@ -133,6 +328,9 @@ class InsEagleSyncApp(_BaseWindow):
         folder_path = self.folder_path_entry.get().strip()
         if not folder_path:
             self._append_log("error: Eagle folder path is required.")
+            return
+        if not self.config.eagle_api_base:
+            self._append_log("error: Eagle API base is required.")
             return
 
         def task() -> dict[str, Any]:
@@ -166,11 +364,15 @@ class InsEagleSyncApp(_BaseWindow):
         if not folder_path:
             self._append_log("error: Eagle folder path is required.")
             return
+        if not self.config.eagle_api_base:
+            self._append_log("error: Eagle API base is required.")
+            return
 
         max_posts = self._read_max_posts()
         if max_posts is False:
             return
 
+        self._warn_about_cookies()
         dry_run = True if force_dry_run else self.dry_run_var.get()
         mode = self.mode.get()
 
@@ -220,6 +422,14 @@ class InsEagleSyncApp(_BaseWindow):
             raise ValueError("single-post mode requires a post or reel URL.")
         return self.config.staging_dir / "unknown" / info.shortcode
 
+    def _warn_about_cookies(self) -> None:
+        cookie_file = self.config.cookies.file
+        if cookie_file is None:
+            self._append_log("warning: cookies.txt path is empty. Instagram may require login cookies.")
+            return
+        if not cookie_file.exists():
+            self._append_log("warning: cookies.txt file does not exist: <hidden>")
+
     def _start_worker(self, label: str, task: Callable[[], dict[str, Any]]) -> None:
         if self.worker is not None and self.worker.is_alive():
             self._append_log("warning: another task is already running.")
@@ -263,7 +473,7 @@ class InsEagleSyncApp(_BaseWindow):
                 self._queue_log(f"{key}: {result[key]}")
 
     def _queue_log(self, message: object) -> None:
-        self.log_queue.put(str(message))
+        self.log_queue.put(self._sanitize_log_message(message))
 
     def _drain_log_queue(self) -> None:
         while True:
@@ -280,8 +490,11 @@ class InsEagleSyncApp(_BaseWindow):
         self.after(100, self._drain_log_queue)
 
     def _append_log(self, message: object) -> None:
-        self.log_text.insert("end", str(message) + "\n")
+        self.log_text.insert("end", self._sanitize_log_message(message) + "\n")
         self.log_text.see("end")
+
+    def _sanitize_log_message(self, message: object) -> str:
+        return sanitize_log_message(message, config_data=self.config_data, config=self.config)
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
@@ -290,8 +503,92 @@ class InsEagleSyncApp(_BaseWindow):
             self.sync_button,
             self.folder_button,
             self.open_staging_button,
+            self.save_settings_button,
+            self.reload_settings_button,
         ):
             button.configure(state=state)
+
+    @staticmethod
+    def _set_entry(entry: Any, value: object) -> None:
+        entry.delete(0, "end")
+        entry.insert(0, str(value))
+
+
+def ensure_config_file(
+    config_path: str | Path = DEFAULT_CONFIG_PATH,
+    example_path: str | Path = EXAMPLE_CONFIG_PATH,
+) -> Path:
+    path = Path(config_path)
+    if path.exists():
+        return path
+
+    example = Path(example_path)
+    if example.exists():
+        data = load_config_data(example)
+    else:
+        data = default_config_data()
+    write_config_data(data, path)
+    return path
+
+
+def load_config_data(path: str | Path) -> dict[str, Any]:
+    config_path = Path(path)
+    data = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    return normalize_config_data(data)
+
+
+def write_config_data(data: dict[str, Any], path: str | Path) -> None:
+    config_path = Path(path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    normalized = normalize_config_data(data)
+    config_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
+    normalized = default_config_data()
+    _deep_update(normalized, data)
+    return normalized
+
+
+def default_config_data() -> dict[str, Any]:
+    return deepcopy(DEFAULT_CONFIG_DATA)
+
+
+def get_config_value(data: dict[str, Any], key: str) -> Any:
+    if key == "cookies_file":
+        return data.get("cookies", {}).get("file") or ""
+    if key == "staging_dir":
+        return data.get("staging_dir", "")
+    if key == "archive_db":
+        return data.get("archive_db", "")
+    if key == "imported_state":
+        return data.get("imported_state", "")
+    if key == "eagle_api_base":
+        return data.get("eagle_api_base", "")
+    if key == "default_folder_path":
+        return data.get("default_eagle_root_folder") or DEFAULT_FOLDER_PATH
+    if key == "http_proxy":
+        return data.get("proxy", {}).get("http_proxy") or ""
+    if key == "https_proxy":
+        return data.get("proxy", {}).get("https_proxy") or ""
+    if key == "max_posts":
+        return data.get("download", {}).get("max_posts", 50)
+    if key == "sleep_request":
+        return data.get("download", {}).get("sleep_request", "8-15")
+    raise KeyError(key)
+
+
+def sanitize_log_message(
+    message: object,
+    *,
+    config_data: dict[str, Any] | None = None,
+    config: AppConfig | None = None,
+) -> str:
+    text = str(message)
+    for secret in _cookie_path_candidates(config_data=config_data, config=config):
+        if secret:
+            text = text.replace(secret, "<hidden>")
+    return text
 
 
 def resolve_config_path(config_path: str) -> Path:
@@ -305,6 +602,40 @@ def resolve_config_path(config_path: str) -> Path:
             return example_path
 
     return path
+
+
+def _deep_update(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update(target[key], value)
+        else:
+            target[key] = value
+
+
+def _cookie_path_candidates(
+    *,
+    config_data: dict[str, Any] | None,
+    config: AppConfig | None,
+) -> set[str]:
+    candidates: set[str] = set()
+    if config_data:
+        raw = config_data.get("cookies", {}).get("file")
+        if raw:
+            candidates.update(_path_variants(str(raw)))
+    if config and config.cookies.file:
+        candidates.update(_path_variants(str(config.cookies.file)))
+    return candidates
+
+
+def _path_variants(path_text: str) -> set[str]:
+    path = Path(path_text)
+    return {
+        path_text,
+        str(path),
+        path.as_posix(),
+        path_text.replace("/", "\\"),
+        path_text.replace("\\", "/"),
+    }
 
 
 def main() -> None:
