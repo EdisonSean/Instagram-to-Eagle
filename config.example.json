@@ -11,6 +11,11 @@
     "http_proxy": "http://127.0.0.1:10809",
     "https_proxy": "http://127.0.0.1:10809"
   },
+  "cookies": {
+    "enabled": false,
+    "from_browser": "",
+    "file": "E:/INS_Eagle_Sync/_cache/instagram-cookies.txt"
+  },
   "download": {
     "sleep_request": "8-15",
     "max_posts": 50

@@ -27,5 +27,4 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-addopts = "--basetemp=.tmp/pytest --cache-clear"
-cache_dir = ".tmp/pytest-cache"
+addopts = "--basetemp=.tmp/pytest --cache-clear -p no:cacheprovider"

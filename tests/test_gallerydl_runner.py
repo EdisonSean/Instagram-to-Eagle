@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ins_eagle_sync.config import AppConfig, DownloadConfig, ProxyConfig
+from ins_eagle_sync.config import AppConfig, CookiesConfig, DownloadConfig, ProxyConfig
 from ins_eagle_sync.gallerydl_runner import (
     build_gallery_dl_request,
     build_subprocess_env,
@@ -14,7 +14,7 @@ from ins_eagle_sync.gallerydl_runner import (
 )
 
 
-def make_config(project_tmp_path, *, proxy_enabled=False):
+def make_config(project_tmp_path, *, proxy_enabled=False, cookies=None):
     return AppConfig(
         gallery_dl_executable="py -m gallery_dl",
         staging_dir=project_tmp_path / "staging",
@@ -29,6 +29,7 @@ def make_config(project_tmp_path, *, proxy_enabled=False):
             https_proxy="http://127.0.0.1:10809",
         ),
         download=DownloadConfig(sleep_request="8-15", max_posts=50),
+        cookies=cookies or CookiesConfig(),
     )
 
 
@@ -40,6 +41,7 @@ def test_build_author_gallery_dl_request_uses_username_directory(project_tmp_pat
     assert request.mode == "author"
     assert request.url == "https://www.instagram.com/quinn.xyz/"
     assert request.target_dir == project_tmp_path / "staging" / "quinn.xyz"
+    assert "--config-ignore" in request.command
     assert str(config.archive_db) in request.command
     assert "--write-metadata" in request.command
     assert str(request.target_dir) in request.command
@@ -93,6 +95,162 @@ def test_run_gallery_dl_calls_subprocess_with_proxy_env(project_tmp_path):
     assert kwargs["text"] is True
     assert kwargs["env"]["HTTP_PROXY"] == "http://127.0.0.1:10809"
     assert kwargs["env"]["HTTPS_PROXY"] == "http://127.0.0.1:10809"
+
+
+def test_build_gallery_dl_request_can_use_browser_cookies(project_tmp_path):
+    config = make_config(
+        project_tmp_path,
+        cookies=CookiesConfig(enabled=True, from_browser="chrome"),
+    )
+
+    request = build_gallery_dl_request(config, "https://www.instagram.com/p/DYld7hQCT90/")
+
+    assert "--cookies-from-browser" in request.command
+    assert "chrome" in request.command
+
+
+def test_build_gallery_dl_request_can_use_cookie_file(project_tmp_path):
+    cookie_file = project_tmp_path / "instagram-cookies.txt"
+    config = make_config(
+        project_tmp_path,
+        cookies=CookiesConfig(enabled=True, file=cookie_file),
+    )
+
+    request = build_gallery_dl_request(config, "https://www.instagram.com/p/DYld7hQCT90/")
+
+    assert "--cookies" in request.command
+    assert str(cookie_file) in request.command
+
+
+def test_run_gallery_dl_missing_cookie_file_skips_subprocess(project_tmp_path):
+    missing_cookie_file = project_tmp_path / "missing-cookies.txt"
+    config = make_config(
+        project_tmp_path,
+        cookies=CookiesConfig(enabled=True, file=missing_cookie_file),
+    )
+    logs = []
+
+    with patch("ins_eagle_sync.gallerydl_runner.subprocess.run") as run_mock:
+        result = run_gallery_dl(
+            config,
+            "https://www.instagram.com/p/DYld7hQCT90/",
+            log=logs.append,
+        )
+
+    assert result is not None
+    assert result.returncode == 2
+    run_mock.assert_not_called()
+    assert any("cookies.file does not exist" in line for line in logs)
+
+
+def test_dry_run_with_missing_cookie_file_logs_warning(project_tmp_path):
+    missing_cookie_file = project_tmp_path / "missing-cookies.txt"
+    config = make_config(
+        project_tmp_path,
+        cookies=CookiesConfig(enabled=True, file=missing_cookie_file),
+    )
+    logs = []
+
+    with patch("ins_eagle_sync.gallerydl_runner.subprocess.run") as run_mock:
+        result = run_gallery_dl(
+            config,
+            "https://www.instagram.com/p/DYld7hQCT90/",
+            dry_run=True,
+            log=logs.append,
+        )
+
+    assert result is None
+    run_mock.assert_not_called()
+    assert any("warning: cookies.file does not exist" in line for line in logs)
+
+
+def test_run_gallery_dl_logs_subprocess_output(project_tmp_path):
+    config = make_config(project_tmp_path)
+    completed = CompletedProcess(args=["py"], returncode=1, stdout="out text", stderr="err text")
+    logs = []
+
+    with patch("ins_eagle_sync.gallerydl_runner.subprocess.run", return_value=completed):
+        result = run_gallery_dl(
+            config,
+            "https://www.instagram.com/p/DYld7hQCT90/",
+            log=logs.append,
+        )
+
+    assert result == completed
+    assert "gallery-dl exit code: 1" in logs
+    assert "gallery-dl stdout:" in logs
+    assert "out text" in logs
+    assert "gallery-dl stderr:" in logs
+    assert "err text" in logs
+
+
+def test_run_gallery_dl_logs_login_redirect_hint(project_tmp_path):
+    config = make_config(project_tmp_path)
+    completed = CompletedProcess(
+        args=["py"],
+        returncode=4,
+        stdout="",
+        stderr="[instagram][error] HTTP redirect to login page (https://www.instagram.com/accounts/login/)",
+    )
+    logs = []
+
+    with patch("ins_eagle_sync.gallerydl_runner.subprocess.run", return_value=completed):
+        run_gallery_dl(
+            config,
+            "https://www.instagram.com/p/DYld7hQCT90/",
+            log=logs.append,
+        )
+
+    assert any("enable cookies" in line for line in logs)
+    assert any("--config-ignore" in line for line in logs)
+
+
+def test_run_gallery_dl_logs_cookie_permission_hint(project_tmp_path):
+    config = make_config(project_tmp_path)
+    completed = CompletedProcess(
+        args=["py"],
+        returncode=4,
+        stdout="",
+        stderr=(
+            "[instagram][warning] cookies: [Errno 13] Permission denied: "
+            "'C:\\Users\\EdisonSean\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 2\\Network\\Cookies'"
+        ),
+    )
+    logs = []
+
+    with patch("ins_eagle_sync.gallerydl_runner.subprocess.run", return_value=completed):
+        run_gallery_dl(
+            config,
+            "https://www.instagram.com/p/DYld7hQCT90/",
+            log=logs.append,
+        )
+
+    assert any("could not use browser cookies" in line for line in logs)
+    assert any("cookies.file" in line for line in logs)
+
+
+def test_run_gallery_dl_logs_cookie_decryption_hint(project_tmp_path):
+    config = make_config(project_tmp_path)
+    completed = CompletedProcess(
+        args=["py"],
+        returncode=4,
+        stdout="",
+        stderr=(
+            "[cookies][warning] Failed to decrypt cookie (DPAPI)\n"
+            "[instagram][warning] cookies: 'NoneType' object has no attribute 'decode'"
+        ),
+    )
+    logs = []
+
+    with patch("ins_eagle_sync.gallerydl_runner.subprocess.run", return_value=completed):
+        run_gallery_dl(
+            config,
+            "https://www.instagram.com/p/DYld7hQCT90/",
+            log=logs.append,
+        )
+
+    assert any("could not use browser cookies" in line for line in logs)
+    assert any("cookies.txt" in line for line in logs)
 
 
 def test_proxy_env_is_none_when_proxy_disabled(project_tmp_path):

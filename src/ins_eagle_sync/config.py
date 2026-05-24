@@ -20,6 +20,13 @@ class DownloadConfig:
 
 
 @dataclass(frozen=True)
+class CookiesConfig:
+    enabled: bool = False
+    from_browser: str | None = None
+    file: Path | None = None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     gallery_dl_executable: str
     staging_dir: Path
@@ -30,6 +37,7 @@ class AppConfig:
     title_caption_chars: int
     proxy: ProxyConfig
     download: DownloadConfig
+    cookies: CookiesConfig
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -41,6 +49,7 @@ def load_config(path: str | Path) -> AppConfig:
 def parse_config(data: dict[str, Any]) -> AppConfig:
     proxy_data = data.get("proxy", {})
     download_data = data.get("download", {})
+    cookies_data = data.get("cookies", {})
 
     return AppConfig(
         gallery_dl_executable=str(data["gallery_dl_executable"]),
@@ -59,4 +68,23 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             sleep_request=str(download_data.get("sleep_request", "8-15")),
             max_posts=int(download_data.get("max_posts", 50)),
         ),
+        cookies=CookiesConfig(
+            enabled=bool(cookies_data.get("enabled", False)),
+            from_browser=_optional_text(cookies_data.get("from_browser")),
+            file=_optional_path(cookies_data.get("file")),
+        ),
     )
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _optional_path(value: Any) -> Path | None:
+    text = _optional_text(value)
+    if text is None:
+        return None
+    return Path(text).expanduser()
