@@ -1,0 +1,18 @@
+{
+  "gallery_dl_executable": "py -m gallery_dl",
+  "staging_dir": "E:/INS_Eagle_Sync/_staging",
+  "archive_db": "E:/INS_Eagle_Sync/_cache/gallery-dl-archive.sqlite3",
+  "imported_state": "E:/INS_Eagle_Sync/_cache/eagle-imported.json",
+  "eagle_api_base": "http://localhost:41595",
+  "default_eagle_root_folder": "Instagram",
+  "title_caption_chars": 20,
+  "proxy": {
+    "enabled": true,
+    "http_proxy": "http://127.0.0.1:10809",
+    "https_proxy": "http://127.0.0.1:10809"
+  },
+  "download": {
+    "sleep_request": "8-15",
+    "max_posts": 50
+  }
+}
