@@ -56,15 +56,17 @@ def test_parse_gallery_dl_instagram_fields_prefers_post_shortcode(project_tmp_pa
     assert result.shortcode == "DYld7hQCT90"
     assert result.media_index == 2
     assert result.website == "https://www.instagram.com/p/DYld7hQCT90/"
-    assert result.title == "A calm city walk #Tr ｜ DYld7hQCT90_02"
+    assert result.title == "A calm city walk #Travel #Night #travel"
+    assert "DYld7hQCT90" not in result.title
+    assert "_02" not in result.title
     assert result.unique_key == "instagram:quinn.xyz:DYld7hQCT90:02"
     assert result.tags == [
         "instagram",
         "author:quinn.xyz",
-        "shortcode:DYld7hQCT90",
         "travel",
         "night",
     ]
+    assert "shortcode:DYld7hQCT90" not in result.tags
     assert "作者: quinn.xyz" in result.annotation
     assert "日期: 2026-01-15 08:30:00" in result.annotation
     assert "Shortcode: DYld7hQCT90" in result.annotation
@@ -134,10 +136,10 @@ def test_scan_staging_dir_uses_path_fallbacks_without_metadata(project_tmp_path)
     assert item.shortcode == "FALLBACK1"
     assert item.media_index == 3
     assert item.caption == ""
-    assert item.title == "FALLBACK1 ｜ FALLBACK1_03"
+    assert item.title == "Instagram Post"
     assert item.website == "https://www.instagram.com/p/FALLBACK1/"
     assert item.unique_key == "instagram:unknown:FALLBACK1:03"
-    assert item.tags == ["instagram", "author:unknown", "shortcode:FALLBACK1"]
+    assert item.tags == ["instagram", "author:unknown"]
 
 
 def test_parse_metadata_item_supports_nested_user_and_title_fallback(project_tmp_path):
@@ -161,5 +163,15 @@ def test_parse_metadata_item_supports_nested_user_and_title_fallback(project_tmp
     assert "art" in result.tags
 
 
-def test_build_import_title_uses_shortcode_when_caption_is_empty():
-    assert build_import_title("", "ABC123", 1) == "ABC123 ｜ ABC123_01"
+def test_build_import_title_uses_author_when_caption_is_empty():
+    assert build_import_title("", "quinn.xyz") == "quinn.xyz"
+
+
+def test_build_import_title_uses_generic_title_when_caption_and_author_are_empty():
+    assert build_import_title("", "unknown") == "Instagram Post"
+
+
+def test_build_import_title_uses_configurable_caption_length():
+    caption = "A" * 75
+
+    assert build_import_title(caption, "author", caption_chars=70) == "A" * 70

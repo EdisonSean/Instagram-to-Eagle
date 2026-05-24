@@ -58,7 +58,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         imported_state=Path(data["imported_state"]).expanduser(),
         eagle_api_base=str(data["eagle_api_base"]).rstrip("/"),
         default_eagle_root_folder=str(data["default_eagle_root_folder"]),
-        title_caption_chars=int(data.get("title_caption_chars", 20)),
+        title_caption_chars=int(data.get("title_caption_chars", 70)),
         proxy=ProxyConfig(
             enabled=bool(proxy_data.get("enabled", False)),
             http_proxy=proxy_data.get("http_proxy"),

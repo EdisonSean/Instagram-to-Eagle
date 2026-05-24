@@ -72,7 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "parse-staging":
-        items = scan_staging_dir(Path(args.staging_dir))
+        config = load_config(resolve_config_path(args.config))
+        items = scan_staging_dir(Path(args.staging_dir), title_caption_chars=config.title_caption_chars)
         safe_print(
             json.dumps(
                 [
@@ -94,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(resolve_config_path(args.config))
 
     if args.command == "import-staging":
-        items = scan_staging_dir(Path(args.staging_dir))
+        items = scan_staging_dir(Path(args.staging_dir), title_caption_chars=config.title_caption_chars)
         state = ImportedState.load(config.imported_state)
         eagle = EagleClient(config.eagle_api_base)
         result = import_staging_items(

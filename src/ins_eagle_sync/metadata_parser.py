@@ -10,6 +10,7 @@ from .utils import extract_hashtags
 
 
 MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov"}
+DEFAULT_TITLE_CAPTION_CHARS = 70
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,11 @@ class ImportItem:
 MediaMetadata = ImportItem
 
 
-def scan_staging_dir(staging_dir: str | Path) -> list[ImportItem]:
+def scan_staging_dir(
+    staging_dir: str | Path,
+    *,
+    title_caption_chars: int = DEFAULT_TITLE_CAPTION_CHARS,
+) -> list[ImportItem]:
     root = Path(staging_dir)
     media_files = sorted(
         path
@@ -60,6 +65,7 @@ def scan_staging_dir(staging_dir: str | Path) -> list[ImportItem]:
                 file_path=file_path,
                 staging_dir=root,
                 default_media_index=default_index,
+                title_caption_chars=title_caption_chars,
             )
         )
     return sort_import_items(items)
@@ -88,12 +94,21 @@ def find_metadata_json(file_path: str | Path) -> Path | None:
     return None
 
 
-def load_metadata_file(path: str | Path) -> list[ImportItem]:
+def load_metadata_file(
+    path: str | Path,
+    *,
+    title_caption_chars: int = DEFAULT_TITLE_CAPTION_CHARS,
+) -> list[ImportItem]:
     metadata_path = Path(path)
     raw = json.loads(metadata_path.read_text(encoding="utf-8"))
     items = raw if isinstance(raw, list) else [raw]
     return [
-        parse_metadata_item(item, metadata_path, default_media_index=index)
+        parse_metadata_item(
+            item,
+            metadata_path,
+            default_media_index=index,
+            title_caption_chars=title_caption_chars,
+        )
         for index, item in enumerate(items, start=1)
     ]
 
@@ -105,6 +120,7 @@ def parse_metadata_item(
     file_path: str | Path | None = None,
     staging_dir: str | Path | None = None,
     default_media_index: int = 1,
+    title_caption_chars: int = DEFAULT_TITLE_CAPTION_CHARS,
 ) -> ImportItem:
     metadata_path = Path(metadata_path) if metadata_path is not None else None
     resolved_file_path = _resolve_file_path(item, metadata_path, file_path)
@@ -131,7 +147,7 @@ def parse_metadata_item(
     website = f"https://www.instagram.com/p/{shortcode}/"
     source_url = _first_text(item, "post_url", "webpage_url", "source_url", "url") or website
     hashtags = extract_hashtags(caption)
-    title = build_import_title(caption, shortcode, media_index)
+    title = build_import_title(caption, username, title_caption_chars)
 
     return ImportItem(
         file_path=resolved_file_path,
@@ -158,9 +174,17 @@ def parse_metadata_item(
     )
 
 
-def build_import_title(caption: str, shortcode: str, media_index: int, caption_chars: int = 20) -> str:
-    prefix = _visible_prefix(caption, caption_chars) or shortcode
-    return f"{prefix} ｜ {shortcode}_{media_index:02d}"
+def build_import_title(
+    caption: str,
+    username: str,
+    caption_chars: int = DEFAULT_TITLE_CAPTION_CHARS,
+) -> str:
+    prefix = _visible_prefix(caption, caption_chars)
+    if prefix:
+        return prefix
+    if username and username.lower() != "unknown":
+        return username
+    return "Instagram Post"
 
 
 def build_annotation(
@@ -186,7 +210,7 @@ def build_annotation(
 
 
 def build_tags(username: str, shortcode: str, hashtags: list[str]) -> list[str]:
-    tags = ["instagram", f"author:{username}", f"shortcode:{shortcode}"]
+    tags = ["instagram", f"author:{username}"]
     for hashtag in hashtags:
         if hashtag not in tags:
             tags.append(hashtag)
