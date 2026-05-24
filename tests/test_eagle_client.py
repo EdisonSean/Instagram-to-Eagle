@@ -50,6 +50,77 @@ def test_check_app_available_uses_application_info_endpoint():
     get_mock.assert_called_once_with("http://localhost:41595/api/application/info", timeout=5)
 
 
+def test_list_folders_flattens_nested_folder_tree():
+    response = make_response(
+        payload={
+            "status": "success",
+            "data": [
+                {
+                    "id": "root-1",
+                    "name": "Instagram",
+                    "children": [
+                        {"id": "child-1", "name": "quinn.xyz", "children": []},
+                    ],
+                }
+            ],
+        }
+    )
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", return_value=response) as get_mock:
+        folders = EagleClient("http://localhost:41595").list_folders()
+
+    get_mock.assert_called_once_with("http://localhost:41595/api/folder/list", timeout=10)
+    assert folders == [
+        {"id": "root-1", "name": "Instagram", "parent_id": None, "path": "Instagram"},
+        {"id": "child-1", "name": "quinn.xyz", "parent_id": "root-1", "path": "Instagram/quinn.xyz"},
+    ]
+
+
+def test_ensure_folder_path_reuses_existing_nested_folder():
+    response = make_response(
+        payload={
+            "status": "success",
+            "data": [
+                {
+                    "id": "root-1",
+                    "name": "Instagram",
+                    "children": [
+                        {"id": "child-1", "name": "quinn.xyz", "children": []},
+                    ],
+                }
+            ],
+        }
+    )
+
+    with (
+        patch("ins_eagle_sync.eagle_client.requests.get", return_value=response),
+        patch("ins_eagle_sync.eagle_client.requests.post") as post_mock,
+    ):
+        folder_id = EagleClient("http://localhost:41595").ensure_folder_path("Instagram/quinn.xyz")
+
+    assert folder_id == "child-1"
+    post_mock.assert_not_called()
+
+
+def test_ensure_folder_path_creates_missing_levels():
+    list_response = make_response(payload={"status": "success", "data": []})
+    create_root_response = make_response(payload={"status": "success", "data": {"id": "root-1", "name": "Instagram"}})
+    create_child_response = make_response(payload={"status": "success", "data": {"id": "child-1", "name": "quinn.xyz"}})
+
+    with (
+        patch("ins_eagle_sync.eagle_client.requests.get", return_value=list_response),
+        patch(
+            "ins_eagle_sync.eagle_client.requests.post",
+            side_effect=[create_root_response, create_child_response],
+        ) as post_mock,
+    ):
+        folder_id = EagleClient("http://localhost:41595").ensure_folder_path("Instagram/quinn.xyz")
+
+    assert folder_id == "child-1"
+    assert post_mock.call_args_list[0].kwargs["json"] == {"folderName": "Instagram"}
+    assert post_mock.call_args_list[1].kwargs["json"] == {"folderName": "quinn.xyz", "parent": "root-1"}
+
+
 def test_add_item_from_path_posts_import_item_payload(project_tmp_path):
     item = ImportItem(
         file_path=project_tmp_path / "image.jpg",

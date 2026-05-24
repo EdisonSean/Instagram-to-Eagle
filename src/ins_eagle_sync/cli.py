@@ -36,7 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_staging_parser = subparsers.add_parser("import-staging", help="Import staged media into Eagle.")
     import_staging_parser.add_argument("staging_dir")
-    import_staging_parser.add_argument("--folder-id", required=True)
+    import_staging_parser.add_argument("--folder-id")
+    import_staging_parser.add_argument("--folder-path")
     import_staging_parser.add_argument("--dry-run", action="store_true")
     import_staging_parser.add_argument("--force", action="store_true")
     import_staging_parser.add_argument("--verify-eagle", action="store_true")
@@ -44,7 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync_post_parser = subparsers.add_parser("sync-post", help="Download and import a single Instagram post.")
     sync_post_parser.add_argument("post_url")
-    sync_post_parser.add_argument("--folder-id", required=True)
+    sync_post_parser.add_argument("--folder-id")
+    sync_post_parser.add_argument("--folder-path")
     sync_post_parser.add_argument("--dry-run", action="store_true")
     sync_post_parser.add_argument("--force", action="store_true")
     sync_post_parser.add_argument("--verify-eagle", action="store_true")
@@ -54,7 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync_author_parser = subparsers.add_parser("sync-author", help="Download and import an Instagram author.")
     sync_author_parser.add_argument("author_url")
-    sync_author_parser.add_argument("--folder-id", required=True)
+    sync_author_parser.add_argument("--folder-id")
+    sync_author_parser.add_argument("--folder-path")
     sync_author_parser.add_argument("--dry-run", action="store_true")
     sync_author_parser.add_argument("--force", action="store_true")
     sync_author_parser.add_argument("--verify-eagle", action="store_true")
@@ -75,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     verify_imports_parser.add_argument("--shortcode")
     verify_imports_parser.add_argument("--folder-id")
     verify_imports_parser.add_argument("--dry-run", action="store_true")
+
+    subparsers.add_parser("list-folders", help="List Eagle folders.")
+
+    ensure_folder_parser = subparsers.add_parser("ensure-folder", help="Create an Eagle folder path if needed.")
+    ensure_folder_parser.add_argument("folder_path")
 
     sync_parser = subparsers.add_parser("sync", help="Author sync mode placeholder.")
     sync_parser.add_argument("url")
@@ -129,15 +137,38 @@ def main(argv: list[str] | None = None) -> int:
 
     config = load_config(resolve_config_path(args.config))
 
+    if args.command == "list-folders":
+        eagle = EagleClient(config.eagle_api_base)
+        try:
+            folders = eagle.list_folders()
+        except Exception as exc:  # noqa: BLE001 - convert API failures into CLI errors.
+            safe_print(f"error: {exc}")
+            return 1
+        safe_print(json.dumps(folders, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "ensure-folder":
+        eagle = EagleClient(config.eagle_api_base)
+        try:
+            folder_id = eagle.ensure_folder_path(args.folder_path)
+        except Exception as exc:  # noqa: BLE001 - convert API failures into CLI errors.
+            safe_print(f"error: {exc}")
+            return 1
+        safe_print(f"folder id: {folder_id}")
+        return 0
+
     if args.command == "import-staging":
         items = scan_staging_dir(Path(args.staging_dir), title_caption_chars=config.title_caption_chars)
         state = ImportedState.load(config.imported_state)
         eagle = EagleClient(config.eagle_api_base)
+        folder_id = resolve_target_folder_id(args, eagle=eagle, dry_run=args.dry_run, log=safe_print)
+        if folder_id is None:
+            return 1
         result = import_staging_items(
             items,
             eagle=eagle,
             state=state,
-            folder_id=args.folder_id,
+            folder_id=folder_id,
             dry_run=args.dry_run,
             force=args.force,
             verify_eagle=args.verify_eagle,
@@ -214,11 +245,14 @@ def main(argv: list[str] | None = None) -> int:
         items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
         state = ImportedState.load(config.imported_state)
         eagle = EagleClient(config.eagle_api_base)
+        folder_id = resolve_target_folder_id(args, eagle=eagle, dry_run=args.dry_run, log=safe_print)
+        if folder_id is None:
+            return 1
         import_result = import_staging_items(
             items,
             eagle=eagle,
             state=state,
-            folder_id=args.folder_id,
+            folder_id=folder_id,
             dry_run=args.dry_run,
             force=args.force,
             verify_eagle=args.verify_eagle,
@@ -254,11 +288,14 @@ def main(argv: list[str] | None = None) -> int:
         items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
         state = ImportedState.load(config.imported_state)
         eagle = EagleClient(config.eagle_api_base)
+        folder_id = resolve_target_folder_id(args, eagle=eagle, dry_run=args.dry_run, log=safe_print)
+        if folder_id is None:
+            return 1
         import_result = import_staging_items(
             items,
             eagle=eagle,
             state=state,
-            folder_id=args.folder_id,
+            folder_id=folder_id,
             dry_run=args.dry_run,
             force=args.force,
             verify_eagle=args.verify_eagle,
@@ -303,6 +340,40 @@ def resolve_config_path(config_path: str) -> Path:
             return example_path
 
     return path
+
+
+def resolve_target_folder_id(
+    args: argparse.Namespace,
+    *,
+    eagle: EagleClient,
+    dry_run: bool,
+    log=None,
+) -> str | None:
+    if log is None:
+        log = safe_print
+    folder_id = getattr(args, "folder_id", None)
+    folder_path = getattr(args, "folder_path", None)
+    if folder_id and folder_path:
+        log("error: --folder-id and --folder-path cannot be used together.")
+        return None
+
+    if folder_id:
+        return folder_id
+
+    if folder_path:
+        if dry_run:
+            log(f"dry-run: would ensure Eagle folder path: {folder_path}")
+            return f"<folder-path:{folder_path}>"
+        try:
+            resolved_folder_id = eagle.ensure_folder_path(folder_path)
+        except Exception as exc:  # noqa: BLE001 - convert API failures into CLI errors.
+            log(f"error: {exc}")
+            return None
+        log(f"resolved Eagle folder path '{folder_path}' to folder id: {resolved_folder_id}")
+        return resolved_folder_id
+
+    log("error: either --folder-id or --folder-path is required.")
+    return None
 
 
 def safe_print(message: object = "") -> None:

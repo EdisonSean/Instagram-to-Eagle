@@ -72,6 +72,49 @@ def test_parse_staging_prints_import_item_summary(project_tmp_path, capsys):
     ]
 
 
+def test_list_folders_cli_prints_folder_summary(project_tmp_path, capsys):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    folders = [
+        {"id": "root-1", "name": "Instagram", "parent_id": None, "path": "Instagram"},
+        {"id": "child-1", "name": "quinn.xyz", "parent_id": "root-1", "path": "Instagram/quinn.xyz"},
+    ]
+    fake_eagle = type("FakeEagle", (), {"list_folders": lambda self: folders})()
+
+    with patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle):
+        exit_code = main(["--config", str(config_path), "list-folders"])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out) == folders
+
+
+def test_list_folders_cli_outputs_clear_error(project_tmp_path, capsys):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+
+    class FakeEagle:
+        def list_folders(self):
+            raise RuntimeError("Eagle is not available")
+
+    with patch("ins_eagle_sync.cli.EagleClient", return_value=FakeEagle()):
+        exit_code = main(["--config", str(config_path), "list-folders"])
+
+    assert exit_code == 1
+    assert "error: Eagle is not available" in capsys.readouterr().out
+
+
+def test_ensure_folder_cli_prints_final_folder_id(project_tmp_path, capsys):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    fake_eagle = type("FakeEagle", (), {"ensure_folder_path": lambda self, path: "folder-1"})()
+
+    with patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle):
+        exit_code = main(["--config", str(config_path), "ensure-folder", "Instagram/quinn.xyz"])
+
+    assert exit_code == 0
+    assert "folder id: folder-1" in capsys.readouterr().out
+
+
 def test_import_staging_dry_run_uses_state_and_importer(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
@@ -99,6 +142,67 @@ def test_import_staging_dry_run_uses_state_and_importer(project_tmp_path):
     assert import_mock.call_args.kwargs["folder_id"] == "folder-1"
     assert import_mock.call_args.kwargs["dry_run"] is True
     assert import_mock.call_args.kwargs["verify_eagle"] is True
+
+
+def test_import_staging_uses_folder_path_when_no_folder_id(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+
+    class FakeEagle:
+        def __init__(self):
+            self.ensure_calls = []
+
+        def ensure_folder_path(self, folder_path):
+            self.ensure_calls.append(folder_path)
+            return "folder-from-path"
+
+    fake_eagle = FakeEagle()
+    with (
+        patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle),
+        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[]),
+        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
+    ):
+        import_mock.return_value.failed = 0
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "import-staging",
+                str(project_tmp_path / "staging"),
+                "--folder-path",
+                "Instagram/quinn.xyz",
+            ]
+        )
+
+    assert exit_code == 0
+    assert fake_eagle.ensure_calls == ["Instagram/quinn.xyz"]
+    assert import_mock.call_args.kwargs["folder_id"] == "folder-from-path"
+
+
+def test_import_staging_rejects_folder_id_and_folder_path_together(project_tmp_path, capsys):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+
+    with (
+        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[]),
+        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
+    ):
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "import-staging",
+                str(project_tmp_path / "staging"),
+                "--folder-id",
+                "folder-1",
+                "--folder-path",
+                "Instagram/quinn.xyz",
+            ]
+        )
+
+    assert exit_code == 1
+    import_mock.assert_not_called()
+    assert "--folder-id and --folder-path cannot be used together" in capsys.readouterr().out
 
 
 def test_forget_import_cli_dry_run_does_not_modify_state(project_tmp_path, capsys):
@@ -260,6 +364,49 @@ def test_sync_post_success_imports_downloaded_staging_items(project_tmp_path):
     assert import_mock.call_args.args[0] == [fake_item]
     assert import_mock.call_args.kwargs["folder_id"] == "folder-1"
     assert import_mock.call_args.kwargs["force"] is True
+
+
+def test_sync_post_uses_folder_path(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    target_dir = project_tmp_path / "staging" / "unknown" / "ABC123"
+    request = type("FakeRequest", (), {"target_dir": target_dir})()
+    fake_item = object()
+
+    class FakeEagle:
+        def __init__(self):
+            self.ensure_calls = []
+
+        def ensure_folder_path(self, folder_path):
+            self.ensure_calls.append(folder_path)
+            return "folder-from-path"
+
+    fake_eagle = FakeEagle()
+    with (
+        patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle),
+        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
+        patch(
+            "ins_eagle_sync.cli.run_gallery_dl",
+            return_value=CompletedProcess(args=["py"], returncode=0, stdout="", stderr=""),
+        ),
+        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[fake_item]),
+        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
+    ):
+        import_mock.return_value.failed = 0
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "sync-post",
+                "https://www.instagram.com/p/ABC123/",
+                "--folder-path",
+                "Instagram/quinn.xyz",
+            ]
+        )
+
+    assert exit_code == 0
+    assert fake_eagle.ensure_calls == ["Instagram/quinn.xyz"]
+    assert import_mock.call_args.kwargs["folder_id"] == "folder-from-path"
 
 
 def test_sync_author_dry_run_prints_download_and_import_plan(project_tmp_path):
@@ -489,3 +636,46 @@ def test_sync_author_success_imports_author_staging_items(project_tmp_path):
     scan_mock.assert_called_once_with(target_dir, title_caption_chars=70)
     assert import_mock.call_args.args[0] == [fake_item]
     assert import_mock.call_args.kwargs["folder_id"] == "folder-1"
+
+
+def test_sync_author_uses_folder_path(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    target_dir = project_tmp_path / "staging" / "quinn.xyz"
+    request = type("FakeRequest", (), {"target_dir": target_dir})()
+    fake_item = object()
+
+    class FakeEagle:
+        def __init__(self):
+            self.ensure_calls = []
+
+        def ensure_folder_path(self, folder_path):
+            self.ensure_calls.append(folder_path)
+            return "folder-from-path"
+
+    fake_eagle = FakeEagle()
+    with (
+        patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle),
+        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
+        patch(
+            "ins_eagle_sync.cli.run_gallery_dl",
+            return_value=CompletedProcess(args=["py"], returncode=0, stdout="", stderr=""),
+        ),
+        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[fake_item]),
+        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
+    ):
+        import_mock.return_value.failed = 0
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "sync-author",
+                "https://www.instagram.com/quinn.xyz/",
+                "--folder-path",
+                "Instagram/quinn.xyz",
+            ]
+        )
+
+    assert exit_code == 0
+    assert fake_eagle.ensure_calls == ["Instagram/quinn.xyz"]
+    assert import_mock.call_args.kwargs["folder_id"] == "folder-from-path"

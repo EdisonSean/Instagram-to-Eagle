@@ -31,6 +31,60 @@ class EagleClient:
         _decode_eagle_response(response, action="check Eagle app availability")
         return True
 
+    def list_folders(self) -> list[dict[str, str | None]]:
+        try:
+            response = requests.get(f"{self.api_base}/api/folder/list", timeout=10)
+        except requests.RequestException as exc:
+            raise EagleApiError(f"Eagle Local API folder list request failed: {exc}") from exc
+
+        payload = _decode_eagle_response(response, action="list folders")
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            return []
+        return _flatten_folder_tree(data)
+
+    def create_folder(self, name: str, parent_id: str | None = None) -> dict[str, str | None]:
+        payload = {"folderName": name}
+        if parent_id:
+            payload["parent"] = parent_id
+
+        try:
+            response = requests.post(f"{self.api_base}/api/folder/create", json=payload, timeout=10)
+        except requests.RequestException as exc:
+            raise EagleApiError(f"Eagle Local API folder create request failed for {name}: {exc}") from exc
+
+        decoded = _decode_eagle_response(response, action=f"create folder {name}")
+        data = decoded.get("data") if isinstance(decoded, dict) else None
+        if not isinstance(data, dict) or not data.get("id"):
+            raise EagleApiError(f"Eagle API did not return a folder id when creating {name}")
+
+        return {
+            "id": str(data["id"]),
+            "name": str(data.get("name") or name),
+            "parent_id": parent_id,
+            "path": "",
+        }
+
+    def ensure_folder_path(self, folder_path: str) -> str:
+        segments = _split_folder_path(folder_path)
+        folders = self.list_folders()
+        current_parent_id: str | None = None
+        current_path = ""
+
+        for segment in segments:
+            current_path = f"{current_path}/{segment}" if current_path else segment
+            existing = _find_folder_child(folders, name=segment, parent_id=current_parent_id)
+            if existing is None:
+                created = self.create_folder(segment, current_parent_id)
+                created["path"] = current_path
+                folders.append(created)
+                existing = created
+            current_parent_id = str(existing["id"])
+
+        if not current_parent_id:
+            raise EagleApiError(f"Invalid Eagle folder path: {folder_path}")
+        return current_parent_id
+
     def get_item_info(self, item_id: str) -> dict[str, Any] | None:
         if not item_id:
             return None
@@ -187,6 +241,81 @@ def _build_add_item_payload(
         "tags": legacy_kwargs["tags"],
         "folderId": resolved_folder_id,
     }
+
+
+def _flatten_folder_tree(
+    folders: list[Any],
+    *,
+    parent_id: str | None = None,
+    parent_path: str = "",
+) -> list[dict[str, str | None]]:
+    entries: list[dict[str, str | None]] = []
+    for folder in folders:
+        if not isinstance(folder, dict) or not folder.get("id") or not folder.get("name"):
+            continue
+
+        folder_id = str(folder["id"])
+        name = str(folder["name"])
+        resolved_parent_id = _folder_parent_id(folder) or parent_id
+        path = f"{parent_path}/{name}" if parent_path else name
+        entries.append(
+            {
+                "id": folder_id,
+                "name": name,
+                "parent_id": resolved_parent_id,
+                "path": path,
+            }
+        )
+
+        children = folder.get("children")
+        if not isinstance(children, list) or not children:
+            children = folder.get("folders")
+        if isinstance(children, list):
+            entries.extend(_flatten_folder_tree(children, parent_id=folder_id, parent_path=path))
+
+    return entries
+
+
+def _folder_parent_id(folder: dict[str, Any]) -> str | None:
+    for key in ("parent", "parentId", "parent_id"):
+        value = folder.get(key)
+        if isinstance(value, dict):
+            for nested_key in ("id", "folderId", "folder_id"):
+                nested_value = value.get(nested_key)
+                if nested_value:
+                    return str(nested_value)
+        elif value:
+            return str(value)
+    return None
+
+
+def _split_folder_path(folder_path: str) -> list[str]:
+    parts = [part.strip() for part in folder_path.replace("\\", "/").split("/")]
+    segments = [part for part in parts if part]
+    if not segments:
+        raise EagleApiError("folder path must not be empty")
+    return segments
+
+
+def _find_folder_child(
+    folders: list[dict[str, str | None]],
+    *,
+    name: str,
+    parent_id: str | None,
+) -> dict[str, str | None] | None:
+    matches = [
+        folder
+        for folder in folders
+        if folder.get("name") == name and _same_optional_id(folder.get("parent_id"), parent_id)
+    ]
+    if len(matches) > 1:
+        parent_label = parent_id or "<root>"
+        raise EagleApiError(f"Multiple Eagle folders named {name!r} exist under parent {parent_label}")
+    return matches[0] if matches else None
+
+
+def _same_optional_id(left: str | None, right: str | None) -> bool:
+    return (left or "") == (right or "")
 
 
 def extract_eagle_item_id(response: dict[str, Any]) -> str:

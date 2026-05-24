@@ -139,6 +139,12 @@ Copy-Item config.example.json config.json
 py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --folder-id "YOUR_EAGLE_FOLDER_ID"
 ```
 
+也可以使用 Eagle 文件夹路径，程序会自动创建缺失的文件夹并使用最终 folder id：
+
+```powershell
+py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --folder-path "Instagram/quinn.xyz"
+```
+
 dry-run 预览：
 
 ```powershell
@@ -161,6 +167,12 @@ py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --
 py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID"
 ```
 
+使用 Eagle 文件夹路径：
+
+```powershell
+py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-path "Instagram/quinn.xyz"
+```
+
 限制最多同步 20 条：
 
 ```powershell
@@ -172,6 +184,47 @@ py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --fo
 ```powershell
 py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID" --verify-eagle
 ```
+
+## Eagle 文件夹管理
+
+列出 Eagle 文件夹：
+
+```powershell
+py -m ins_eagle_sync.cli list-folders
+```
+
+输出包含：
+
+- `id`
+- `name`
+- `parent_id`
+- `path`
+
+确保文件夹路径存在，不存在则逐级创建：
+
+```powershell
+py -m ins_eagle_sync.cli ensure-folder "Instagram/quinn.xyz"
+```
+
+示例路径：
+
+```text
+Instagram/quinn.xyz
+```
+
+会检查或创建：
+
+```text
+Instagram
+Instagram/quinn.xyz
+```
+
+`sync-post`、`sync-author`、`import-staging` 都支持：
+
+- `--folder-id`
+- `--folder-path`
+
+两者只能选一个。如果同时传入，CLI 会报错并退出。需要最稳定、最明确的行为时优先使用 `--folder-id`；想减少手动复制 folder id 时使用 `--folder-path`。
 
 ## staging 预览
 
@@ -195,6 +248,12 @@ py -m ins_eagle_sync.cli parse-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7
 
 ```powershell
 py -m ins_eagle_sync.cli import-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7hQCT90" --folder-id "YOUR_EAGLE_FOLDER_ID"
+```
+
+使用 Eagle 文件夹路径：
+
+```powershell
+py -m ins_eagle_sync.cli import-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7hQCT90" --folder-path "Instagram/quinn.xyz"
 ```
 
 dry-run：
