@@ -6,8 +6,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from ins_eagle_sync.metadata_parser import parse_metadata_item
 
 
-def test_parse_metadata_item_normalizes_common_fields(tmp_path):
-    metadata_path = tmp_path / "ABC123.json"
+def test_parse_metadata_item_normalizes_common_fields(project_tmp_path):
+    metadata_path = project_tmp_path / "ABC123.json"
     item = {
         "shortcode": "ABC123",
         "num": 2,
@@ -24,5 +24,5 @@ def test_parse_metadata_item_normalizes_common_fields(tmp_path):
     assert result.media_index == 2
     assert result.caption == "caption #Tag"
     assert result.author == "author"
-    assert result.local_file == tmp_path / "image.jpg"
+    assert result.local_file == project_tmp_path / "image.jpg"
     assert result.hashtags == ["tag"]

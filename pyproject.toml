@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ins-eagle-sync"
+version = "0.1.0"
+description = "Download Instagram content with gallery-dl and import staged files into Eagle."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "gallery-dl>=1.27.0",
+  "requests>=2.32.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[project.scripts]
+ins-eagle-sync = "ins_eagle_sync.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--basetemp=.tmp/pytest --cache-clear"
+cache_dir = ".tmp/pytest-cache"

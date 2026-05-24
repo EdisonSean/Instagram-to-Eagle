@@ -10,8 +10,8 @@ def test_import_key_uses_shortcode_and_media_index():
     assert import_key("ABC123", 3) == "ABC123:3"
 
 
-def test_state_store_round_trip(tmp_path):
-    path = tmp_path / "state" / "imported.json"
+def test_state_store_round_trip(project_tmp_path):
+    path = project_tmp_path / "state" / "imported.json"
     state = ImportedState.load(path)
 
     assert not state.has_imported("ABC123", 1)

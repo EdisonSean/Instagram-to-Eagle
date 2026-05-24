@@ -1,5 +1,6 @@
 # Python bytecode and caches
 __pycache__/
+*.pyc
 *.py[cod]
 *$py.class
 .pytest_cache/
@@ -25,6 +26,7 @@ config.json
 .env.*
 
 # Project runtime data
+.tmp/
 _staging/
 _cache/
 *.sqlite3
