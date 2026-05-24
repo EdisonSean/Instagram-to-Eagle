@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shlex
+import subprocess
 import threading
 import traceback
 from copy import deepcopy
@@ -17,6 +19,7 @@ except ImportError:  # pragma: no cover - runtime dependency hint for GUI users.
 
 from . import services
 from .config import AppConfig, load_config
+from .eagle_client import EagleClient
 from .utils import InstagramMode, detect_instagram_url
 
 
@@ -27,6 +30,10 @@ MODE_AUTHOR = "作者 sync-author"
 SYNC_TAB_NAME = "同步"
 SETTINGS_TAB_NAME = "设置"
 DEFAULT_FOLDER_PATH = "Instagram/quinn.xyz"
+STATUS_READY = "Ready"
+STATUS_RUNNING = "Running"
+STATUS_DONE = "Done"
+STATUS_FAILED = "Failed"
 
 DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "gallery_dl_executable": "py -m gallery_dl",
@@ -65,6 +72,7 @@ class InsEagleSyncApp(_BaseWindow):
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker: threading.Thread | None = None
         self.setting_entries: dict[str, Any] = {}
+        self.status_var = ctk.StringVar(value=STATUS_READY)
         self.config_path = ensure_config_file(DEFAULT_CONFIG_PATH, EXAMPLE_CONFIG_PATH)
         self.config_data = load_config_data(self.config_path)
         self.config = self._load_config()
@@ -72,6 +80,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._build_layout()
         self._set_default_values()
         self.after(100, self._drain_log_queue)
+        self.after(250, self.startup_checks)
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
@@ -85,9 +94,14 @@ class InsEagleSyncApp(_BaseWindow):
         self._build_sync_tab(self.sync_tab)
         self._build_settings_tab(self.settings_tab)
 
+        status_bar = ctk.CTkFrame(self, corner_radius=0)
+        status_bar.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 12))
+        ctk.CTkLabel(status_bar, text="Status:").grid(row=0, column=0, padx=(12, 6), pady=6, sticky="w")
+        ctk.CTkLabel(status_bar, textvariable=self.status_var).grid(row=0, column=1, padx=(0, 12), pady=6, sticky="w")
+
     def _build_sync_tab(self, parent: Any) -> None:
         parent.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(3, weight=1)
+        parent.grid_rowconfigure(4, weight=1)
 
         header = ctk.CTkFrame(parent, corner_radius=0)
         header.grid(row=0, column=0, sticky="ew")
@@ -141,12 +155,20 @@ class InsEagleSyncApp(_BaseWindow):
             row=0, column=4, padx=4, pady=8, sticky="w"
         )
 
+        log_tools = ctk.CTkFrame(parent, corner_radius=0)
+        log_tools.grid(row=3, column=0, sticky="ew", padx=16, pady=(8, 0))
+        log_tools.grid_columnconfigure(2, weight=1)
+        self.clear_log_button = ctk.CTkButton(log_tools, text="清空日志", width=96, command=self.clear_log)
+        self.clear_log_button.grid(row=0, column=0, padx=(0, 8), pady=6)
+        self.copy_log_button = ctk.CTkButton(log_tools, text="复制日志", width=96, command=self.copy_log)
+        self.copy_log_button.grid(row=0, column=1, padx=8, pady=6)
+
         self.log_text = ctk.CTkTextbox(parent, wrap="word")
-        self.log_text.grid(row=3, column=0, sticky="nsew", padx=16, pady=(8, 12))
+        self.log_text.grid(row=4, column=0, sticky="nsew", padx=16, pady=(4, 12))
 
         actions = ctk.CTkFrame(parent, corner_radius=0)
-        actions.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 16))
-        actions.grid_columnconfigure(4, weight=1)
+        actions.grid(row=5, column=0, sticky="ew", padx=16, pady=(0, 16))
+        actions.grid_columnconfigure(7, weight=1)
 
         self.preview_button = ctk.CTkButton(actions, text="预览", command=self.preview)
         self.preview_button.grid(row=0, column=0, padx=(0, 8), pady=8)
@@ -156,6 +178,10 @@ class InsEagleSyncApp(_BaseWindow):
         self.folder_button.grid(row=0, column=2, padx=8, pady=8)
         self.open_staging_button = ctk.CTkButton(actions, text="打开 staging 目录", command=self.open_staging_dir)
         self.open_staging_button.grid(row=0, column=3, padx=8, pady=8)
+        self.open_config_button = ctk.CTkButton(actions, text="打开 config 目录", command=self.open_config_dir)
+        self.open_config_button.grid(row=0, column=4, padx=8, pady=8)
+        self.open_readme_button = ctk.CTkButton(actions, text="打开 README.md", command=self.open_readme)
+        self.open_readme_button.grid(row=0, column=5, padx=8, pady=8)
 
     def _build_settings_tab(self, parent: Any) -> None:
         parent.grid_columnconfigure(0, weight=1)
@@ -318,6 +344,25 @@ class InsEagleSyncApp(_BaseWindow):
     def _setting_value(self, key: str) -> str:
         return self.setting_entries[key].get().strip()
 
+    def startup_checks(self) -> None:
+        def run() -> None:
+            for message in run_startup_checks(self.config):
+                self._queue_log(message)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def clear_log(self) -> None:
+        self.log_text.delete("1.0", "end")
+
+    def copy_log(self) -> None:
+        try:
+            text = self.log_text.get("1.0", "end-1c")
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self._append_log("log copied to clipboard.")
+        except Exception as exc:  # noqa: BLE001 - user-facing GUI error.
+            self._append_log(f"error: could not copy log: {exc}")
+
     def preview(self) -> None:
         self._run_sync_task(force_dry_run=True)
 
@@ -354,6 +399,23 @@ class InsEagleSyncApp(_BaseWindow):
             self._append_log(f"opened staging directory: {path}")
         except Exception as exc:  # noqa: BLE001 - user-facing log.
             self._append_log(f"error: could not open staging directory {path}: {exc}")
+
+    def open_config_dir(self) -> None:
+        self._open_path(Path(self.config_path).resolve().parent, "config directory")
+
+    def open_readme(self) -> None:
+        readme_path = Path("README.md").resolve()
+        if not readme_path.exists():
+            self._append_log(f"warning: README.md does not exist: {readme_path}")
+            return
+        self._open_path(readme_path, "README.md")
+
+    def _open_path(self, path: Path, label: str) -> None:
+        try:
+            os.startfile(path)  # type: ignore[attr-defined]
+            self._append_log(f"opened {label}: {path}")
+        except Exception as exc:  # noqa: BLE001 - user-facing log.
+            self._append_log(f"error: could not open {label}: {exc}")
 
     def _run_sync_task(self, *, force_dry_run: bool) -> None:
         url = self.url_entry.get().strip()
@@ -436,19 +498,22 @@ class InsEagleSyncApp(_BaseWindow):
             return
 
         self._set_controls_enabled(False)
+        self._set_status(STATUS_RUNNING)
         self._append_log("")
         self._append_log(f"== {label} started ==")
 
         def run() -> None:
+            done_message = "__TASK_DONE_FAILED__"
             try:
                 result = task()
+                done_message = "__TASK_DONE_OK__" if result.get("ok") else "__TASK_DONE_FAILED__"
                 self._queue_log(f"== {label} finished: {'ok' if result.get('ok') else 'failed'} ==")
                 self._queue_summary(result)
             except Exception:
                 self._queue_log("error: unhandled exception")
                 self._queue_log(traceback.format_exc())
             finally:
-                self.log_queue.put("__TASK_DONE__")
+                self.log_queue.put(done_message)
 
         self.worker = threading.Thread(target=run, daemon=True)
         self.worker.start()
@@ -482,8 +547,12 @@ class InsEagleSyncApp(_BaseWindow):
             except queue.Empty:
                 break
 
-            if message == "__TASK_DONE__":
+            if message == "__TASK_DONE_OK__":
                 self._set_controls_enabled(True)
+                self._set_status(STATUS_DONE)
+            elif message == "__TASK_DONE_FAILED__":
+                self._set_controls_enabled(True)
+                self._set_status(STATUS_FAILED)
             else:
                 self._append_log(message)
 
@@ -503,10 +572,21 @@ class InsEagleSyncApp(_BaseWindow):
             self.sync_button,
             self.folder_button,
             self.open_staging_button,
+            self.open_config_button,
+            self.open_readme_button,
+            self.clear_log_button,
+            self.copy_log_button,
             self.save_settings_button,
             self.reload_settings_button,
         ):
             button.configure(state=state)
+        if enabled:
+            self.sync_button.configure(text="开始同步")
+        else:
+            self.sync_button.configure(text="正在运行...")
+
+    def _set_status(self, value: str) -> None:
+        self.status_var.set(value)
 
     @staticmethod
     def _set_entry(entry: Any, value: object) -> None:
@@ -589,6 +669,53 @@ def sanitize_log_message(
         if secret:
             text = text.replace(secret, "<hidden>")
     return text
+
+
+def run_startup_checks(config: AppConfig) -> list[str]:
+    messages = ["startup checks:"]
+
+    if config.eagle_api_base:
+        try:
+            EagleClient(config.eagle_api_base).check_app_available()
+            messages.append("ok: Eagle API is reachable.")
+        except Exception as exc:  # noqa: BLE001 - startup diagnostics should never crash GUI.
+            messages.append(f"warning: Eagle API is not reachable: {exc}")
+    else:
+        messages.append("warning: Eagle API base is empty.")
+
+    cookie_file = config.cookies.file
+    if cookie_file is None:
+        messages.append("warning: cookies.txt path is empty. Instagram may require login cookies.")
+    elif cookie_file.exists():
+        messages.append("ok: cookies.txt exists: <hidden>")
+    else:
+        messages.append("warning: cookies.txt file does not exist: <hidden>")
+
+    gallery_ok, gallery_message = check_gallery_dl_available(config.gallery_dl_executable)
+    messages.append(gallery_message if gallery_ok else f"warning: {gallery_message}")
+    return [sanitize_log_message(message, config=config) for message in messages]
+
+
+def check_gallery_dl_available(gallery_dl_executable: str) -> tuple[bool, str]:
+    command = [*shlex.split(gallery_dl_executable), "--version"]
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception as exc:  # noqa: BLE001 - startup diagnostics should stay non-fatal.
+        return False, f"gallery-dl is not available: {exc}"
+
+    if result.returncode == 0:
+        version = (result.stdout or result.stderr or "").strip()
+        suffix = f" ({version})" if version else ""
+        return True, f"ok: gallery-dl is available{suffix}."
+    stderr = (result.stderr or result.stdout or "").strip()
+    detail = f": {stderr}" if stderr else ""
+    return False, f"gallery-dl check failed with exit code {result.returncode}{detail}"
 
 
 def resolve_config_path(config_path: str) -> Path:
