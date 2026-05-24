@@ -4,7 +4,13 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ins_eagle_sync.eagle_client import EagleApiError, EagleClient
+from ins_eagle_sync.eagle_client import (
+    ITEM_ALIVE_BUT_NOT_IN_FOLDER,
+    ITEM_ALIVE_IN_FOLDER,
+    ITEM_MISSING,
+    EagleApiError,
+    EagleClient,
+)
 from ins_eagle_sync.importer import import_staging_items, verify_import_records
 from ins_eagle_sync.metadata_parser import ImportItem
 from ins_eagle_sync.state_store import ImportedState
@@ -28,6 +34,7 @@ class FakeEagle:
         item_exists_error=None,
         matching_item_id="",
         find_error=None,
+        item_folder_statuses=None,
     ):
         self.response = response or {"status": "success", "data": {"id": "eagle-item-1"}}
         self.error = error
@@ -35,9 +42,11 @@ class FakeEagle:
         self.item_exists_error = item_exists_error
         self.matching_item_id = matching_item_id
         self.find_error = find_error
+        self.item_folder_statuses = item_folder_statuses or {}
         self.check_calls = 0
         self.add_calls = []
         self.item_exists_calls = []
+        self.item_exists_in_folder_calls = []
         self.find_calls = []
 
     def check_app_available(self):
@@ -55,6 +64,15 @@ class FakeEagle:
         if self.item_exists_error is not None:
             raise self.item_exists_error
         return item_id in self.existing_item_ids
+
+    def item_exists_in_folder(self, item_id, folder_id):
+        self.item_exists_calls.append(item_id)
+        self.item_exists_in_folder_calls.append((item_id, folder_id))
+        if self.item_exists_error is not None:
+            raise self.item_exists_error
+        if item_id in self.item_folder_statuses:
+            return self.item_folder_statuses[item_id]
+        return ITEM_ALIVE_IN_FOLDER if item_id in self.existing_item_ids else ITEM_MISSING
 
     def find_matching_item_id(self, import_item, folder_id):
         self.find_calls.append((import_item, folder_id))
@@ -164,6 +182,34 @@ def test_existing_unique_key_with_verify_eagle_missing_is_reimported(project_tmp
     assert loaded.records[item.unique_key]["eagle_item_id"] == "replacement"
 
 
+def test_existing_unique_key_with_verify_eagle_outside_folder_is_reimported(project_tmp_path):
+    item = make_item(project_tmp_path)
+    state_path = project_tmp_path / "state.json"
+    state = ImportedState.load(state_path)
+    state.mark_item_imported(item, eagle_item_id="existing", folder_id="folder-1")
+    state.save()
+    eagle = FakeEagle(
+        response={"status": "success", "data": {"id": "replacement"}},
+        item_folder_statuses={"existing": ITEM_ALIVE_BUT_NOT_IN_FOLDER},
+    )
+
+    result = import_staging_items(
+        [item],
+        eagle=eagle,
+        state=state,
+        folder_id="folder-1",
+        verify_eagle=True,
+        log=lambda _line: None,
+    )
+
+    assert result.skipped == 0
+    assert result.imported == 1
+    assert eagle.item_exists_in_folder_calls == [("existing", "folder-1")]
+    loaded = ImportedState.load(state_path)
+    assert loaded.records[item.unique_key]["eagle_item_id"] == "replacement"
+    assert loaded.records[item.unique_key]["folder_id"] == "folder-1"
+
+
 def test_existing_unique_key_with_verify_eagle_unknown_is_skipped(project_tmp_path):
     item = make_item(project_tmp_path)
     state_path = project_tmp_path / "state.json"
@@ -190,7 +236,7 @@ def test_existing_unique_key_with_verify_eagle_unknown_is_skipped(project_tmp_pa
     assert eagle.add_calls == []
     loaded = ImportedState.load(state_path)
     assert loaded.records[item.unique_key]["eagle_item_id"] == "existing"
-    assert any("warning: could not verify Eagle item existing" in line for line in logs)
+    assert any("warning: could not verify Eagle item folder membership existing" in line for line in logs)
 
 
 def test_existing_unique_key_without_id_recovers_id_and_skips(project_tmp_path):
@@ -332,6 +378,7 @@ def test_successful_import_writes_imported_state(project_tmp_path):
     assert record["website"] == item.website
     assert record["title"] == item.title
     assert record["eagle_item_id"] == "eagle-123"
+    assert record["folder_id"] == "folder-1"
     assert record["imported_at"]
 
 
@@ -455,6 +502,52 @@ def test_verify_import_records_removes_file_does_not_exist_state(project_tmp_pat
     assert result.removed == 3
     loaded = ImportedState.load(state_path)
     assert all(not loaded.has_unique_key(item.unique_key) for item in items)
+
+
+def test_verify_import_records_with_folder_reports_out_of_folder(project_tmp_path):
+    item = make_item(project_tmp_path)
+    state_path = project_tmp_path / "state.json"
+    state = ImportedState.load(state_path)
+    state.mark_item_imported(item, eagle_item_id="eagle-1", folder_id="folder-1")
+    state.save()
+    eagle = FakeEagle(item_folder_statuses={"eagle-1": ITEM_ALIVE_BUT_NOT_IN_FOLDER})
+
+    result = verify_import_records(
+        eagle=eagle,
+        state=state,
+        folder_id="folder-1",
+        dry_run=True,
+        log=lambda _line: None,
+    )
+
+    assert result.checked == 1
+    assert result.alive == 0
+    assert result.missing == 0
+    assert result.alive_but_not_in_folder == 1
+    assert result.unknown == 0
+    assert result.removed == 0
+    assert ImportedState.load(state_path).has_unique_key(item.unique_key)
+
+
+def test_verify_import_records_with_folder_removes_out_of_folder_state(project_tmp_path):
+    item = make_item(project_tmp_path)
+    state_path = project_tmp_path / "state.json"
+    state = ImportedState.load(state_path)
+    state.mark_item_imported(item, eagle_item_id="eagle-1", folder_id="folder-1")
+    state.save()
+    eagle = FakeEagle(item_folder_statuses={"eagle-1": ITEM_ALIVE_BUT_NOT_IN_FOLDER})
+
+    result = verify_import_records(
+        eagle=eagle,
+        state=state,
+        folder_id="folder-1",
+        log=lambda _line: None,
+    )
+
+    assert result.checked == 1
+    assert result.alive_but_not_in_folder == 1
+    assert result.removed == 1
+    assert not ImportedState.load(state_path).has_unique_key(item.unique_key)
 
 
 def test_verify_import_records_keeps_unconfirmed_500_as_unknown(project_tmp_path):

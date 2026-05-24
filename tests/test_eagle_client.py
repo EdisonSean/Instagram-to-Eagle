@@ -7,7 +7,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pytest
 import requests
 
-from ins_eagle_sync.eagle_client import EagleApiError, EagleClient, extract_eagle_item_id
+from ins_eagle_sync.eagle_client import (
+    ITEM_ALIVE_BUT_NOT_IN_FOLDER,
+    ITEM_ALIVE_IN_FOLDER,
+    ITEM_MISSING,
+    EagleApiError,
+    EagleClient,
+    extract_eagle_item_id,
+)
 from ins_eagle_sync.metadata_parser import ImportItem
 
 
@@ -233,6 +240,65 @@ def test_item_exists_returns_false_when_deleted():
 
     with patch("ins_eagle_sync.eagle_client.requests.get", return_value=response):
         assert EagleClient("http://localhost:41595").item_exists("item-1") is False
+
+
+def test_item_exists_in_folder_returns_alive_when_folder_matches():
+    response = make_response(
+        payload={"status": "success", "data": {"id": "item-1", "isDeleted": False, "folders": ["folder-1"]}}
+    )
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", return_value=response):
+        assert EagleClient("http://localhost:41595").item_exists_in_folder("item-1", "folder-1") == ITEM_ALIVE_IN_FOLDER
+
+
+def test_item_exists_in_folder_returns_alive_but_not_in_folder():
+    response = make_response(
+        payload={"status": "success", "data": {"id": "item-1", "isDeleted": False, "folderIds": ["folder-2"]}}
+    )
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", return_value=response):
+        assert (
+            EagleClient("http://localhost:41595").item_exists_in_folder("item-1", "folder-1")
+            == ITEM_ALIVE_BUT_NOT_IN_FOLDER
+        )
+
+
+def test_item_exists_in_folder_returns_missing_when_deleted():
+    response = make_response(payload={"status": "success", "data": {"id": "item-1", "isDeleted": True}})
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", return_value=response):
+        assert EagleClient("http://localhost:41595").item_exists_in_folder("item-1", "folder-1") == ITEM_MISSING
+
+
+def test_item_exists_in_folder_uses_item_list_when_info_has_no_folder_data():
+    info_response = make_response(
+        payload={
+            "status": "success",
+            "data": {
+                "id": "item-1",
+                "isDeleted": False,
+                "url": "https://www.instagram.com/p/ABC123/",
+                "annotation": "Shortcode: ABC123\n序号: 01",
+            },
+        }
+    )
+    list_response = make_response(
+        payload={
+            "status": "success",
+            "data": [
+                {
+                    "id": "item-1",
+                    "url": "https://www.instagram.com/p/ABC123/",
+                    "annotation": "Shortcode: ABC123\n序号: 01",
+                }
+            ],
+        }
+    )
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", side_effect=[info_response, list_response]) as get_mock:
+        assert EagleClient("http://localhost:41595").item_exists_in_folder("item-1", "folder-1") == ITEM_ALIVE_IN_FOLDER
+
+    assert get_mock.call_args_list[1].kwargs["params"]["folders"] == "folder-1"
 
 
 def test_item_exists_returns_false_when_item_is_not_found():

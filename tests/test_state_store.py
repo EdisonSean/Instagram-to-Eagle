@@ -53,6 +53,32 @@ def test_state_store_writes_unique_key_records(project_tmp_path):
     }
 
 
+def test_state_store_writes_folder_id_when_provided(project_tmp_path):
+    path = project_tmp_path / "state" / "imported.json"
+    state = ImportedState.load(path)
+    item = type(
+        "FakeImportItem",
+        (),
+        {
+            "unique_key": "instagram:user:ABC123:01",
+            "file_path": Path("image.jpg"),
+            "website": "https://www.instagram.com/p/ABC123/",
+            "title": "Title",
+        },
+    )()
+
+    state.mark_item_imported(
+        item,
+        eagle_item_id="eagle-1",
+        folder_id="folder-1",
+        imported_at="2026-01-01T00:00:00+00:00",
+    )
+    state.save()
+
+    loaded = ImportedState.load(path)
+    assert loaded.records["instagram:user:ABC123:01"]["folder_id"] == "folder-1"
+
+
 def write_state(path, records):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(records, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

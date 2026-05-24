@@ -312,13 +312,19 @@ def test_sync_author_dry_run_prints_download_and_import_plan(project_tmp_path):
 
 
 class FakeCliEagle:
-    def __init__(self, existing_item_ids=None):
+    def __init__(self, existing_item_ids=None, item_folder_statuses=None):
         self.existing_item_ids = set(existing_item_ids or [])
+        self.item_folder_statuses = item_folder_statuses or {}
         self.item_exists_calls = []
+        self.item_exists_in_folder_calls = []
 
     def item_exists(self, item_id):
         self.item_exists_calls.append(item_id)
         return item_id in self.existing_item_ids
+
+    def item_exists_in_folder(self, item_id, folder_id):
+        self.item_exists_in_folder_calls.append((item_id, folder_id))
+        return self.item_folder_statuses[item_id]
 
 
 def test_verify_imports_cli_dry_run_does_not_modify_state(project_tmp_path, capsys):
@@ -351,7 +357,7 @@ def test_verify_imports_cli_dry_run_does_not_modify_state(project_tmp_path, caps
     assert "alive: 1" in output
     assert "missing: 1" in output
     assert "removed: 0" in output
-    assert "would remove: instagram:quinn.xyz:DYld7hQCT90:01" in output
+    assert "missing: instagram:quinn.xyz:DYld7hQCT90:01" in output
 
 
 def test_verify_imports_cli_removes_missing_records(project_tmp_path, capsys):
@@ -385,6 +391,38 @@ def test_verify_imports_cli_removes_missing_records(project_tmp_path, capsys):
     output = capsys.readouterr().out
     assert "checked: 2" in output
     assert "removed: 1" in output
+
+
+def test_verify_imports_cli_with_folder_id_reports_out_of_folder(project_tmp_path, capsys):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    state_path = project_tmp_path / "imported.json"
+    records = {
+        "instagram:quinn.xyz:DYld7hQCT90:01": {"eagle_item_id": "outside", "folder_id": "folder-1"},
+    }
+    state_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    fake_eagle = FakeCliEagle(item_folder_statuses={"outside": "alive_but_not_in_folder"})
+
+    with patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle):
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "verify-imports",
+                "--shortcode",
+                "DYld7hQCT90",
+                "--folder-id",
+                "folder-1",
+                "--dry-run",
+            ]
+        )
+
+    assert exit_code == 0
+    assert json.loads(state_path.read_text(encoding="utf-8")) == records
+    assert fake_eagle.item_exists_in_folder_calls == [("outside", "folder-1")]
+    output = capsys.readouterr().out
+    assert "alive_but_not_in_folder: 1" in output
+    assert "removed: 0" in output
 
 
 def test_sync_author_gallery_dl_failure_does_not_import(project_tmp_path):

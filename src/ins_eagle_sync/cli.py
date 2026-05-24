@@ -73,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_imports_parser.add_argument("--unique-key")
     verify_imports_parser.add_argument("--username")
     verify_imports_parser.add_argument("--shortcode")
+    verify_imports_parser.add_argument("--folder-id")
     verify_imports_parser.add_argument("--dry-run", action="store_true")
 
     sync_parser = subparsers.add_parser("sync", help="Author sync mode placeholder.")
@@ -182,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             unique_key=args.unique_key,
             shortcode=args.shortcode,
             username=args.username,
+            folder_id=args.folder_id,
             dry_run=args.dry_run,
             log=safe_print,
         )

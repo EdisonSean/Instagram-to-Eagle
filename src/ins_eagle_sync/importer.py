@@ -3,7 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
-from .eagle_client import EagleApiError, EagleClient, extract_eagle_item_id
+from .eagle_client import (
+    ITEM_ALIVE_BUT_NOT_IN_FOLDER,
+    ITEM_ALIVE_IN_FOLDER,
+    ITEM_MISSING,
+    EagleApiError,
+    EagleClient,
+    extract_eagle_item_id,
+)
 from .metadata_parser import ImportItem
 from .state_store import ImportedState
 
@@ -32,9 +39,11 @@ class VerifyImportsResult:
     checked: int = 0
     alive: int = 0
     missing: int = 0
+    alive_but_not_in_folder: int = 0
     unknown: int = 0
     removed: int = 0
     missing_keys: list[str] = field(default_factory=list)
+    out_of_folder_keys: list[str] = field(default_factory=list)
 
 
 def import_staging_items(
@@ -92,24 +101,30 @@ def import_staging_items(
                 continue
 
             try:
-                exists = eagle.item_exists(eagle_item_id)
+                status = eagle.item_exists_in_folder(eagle_item_id, folder_id)
             except EagleApiError as exc:
                 result.skipped += 1
                 log(
-                    f"warning: could not verify Eagle item {eagle_item_id} for {item.unique_key}: "
+                    f"warning: could not verify Eagle item folder membership {eagle_item_id} for {item.unique_key}: "
                     f"{exc}; skip to avoid duplicate import."
                 )
                 continue
 
-            if exists is True:
+            if status == ITEM_ALIVE_IN_FOLDER:
                 result.skipped += 1
-                log(f"skip existing Eagle item: {item.unique_key}")
+                log(f"skip existing Eagle item in target folder: {item.unique_key}")
                 continue
 
-            if exists is not False:
+            if status == ITEM_ALIVE_BUT_NOT_IN_FOLDER:
+                state.remove_keys([item.unique_key], save=True)
+                log(f"removed imported_state record for item outside target folder: {item.unique_key}")
+                pending_items.append(item)
+                continue
+
+            if status != ITEM_MISSING:
                 result.skipped += 1
                 log(
-                    f"warning: Eagle item status is unknown for {item.unique_key} "
+                    f"warning: Eagle item folder status is unknown for {item.unique_key} "
                     f"({eagle_item_id}); skip to avoid duplicate import."
                 )
                 continue
@@ -141,7 +156,7 @@ def import_staging_items(
                     f"warning: Eagle API response did not include an item id for {item.unique_key}; "
                     "future --verify-eagle runs will skip this state record."
                 )
-            state.mark_item_imported(item, eagle_item_id=eagle_item_id)
+            state.mark_item_imported(item, eagle_item_id=eagle_item_id, folder_id=folder_id)
             state.save()
             result.imported += 1
             log(f"imported: {item.unique_key}")
@@ -162,6 +177,7 @@ def verify_import_records(
     unique_key: str | None = None,
     shortcode: str | None = None,
     username: str | None = None,
+    folder_id: str | None = None,
     dry_run: bool = False,
     log: LogFn = print,
 ) -> VerifyImportsResult:
@@ -176,30 +192,14 @@ def verify_import_records(
             log(f"warning: imported_state has no eagle_item_id: {key}")
             continue
 
-        try:
-            exists = eagle.item_exists(eagle_item_id)
-        except EagleApiError as exc:
-            result.unknown += 1
-            log(f"warning: could not verify Eagle item {eagle_item_id} for {key}: {exc}")
-            continue
+        if folder_id:
+            _verify_record_with_folder(key, eagle_item_id, folder_id, eagle=eagle, result=result, log=log)
+        else:
+            _verify_record_exists(key, eagle_item_id, eagle=eagle, result=result, log=log)
 
-        if exists is True:
-            result.alive += 1
-            log(f"alive: {key}")
-            continue
-
-        if exists is not False:
-            result.unknown += 1
-            log(f"warning: Eagle item status is unknown for {key}: {eagle_item_id}")
-            continue
-
-        result.missing += 1
-        result.missing_keys.append(key)
-        action = "would remove" if dry_run else "missing"
-        log(f"{action}: {key}")
-
-    if not dry_run and result.missing_keys:
-        removed_keys = state.remove_keys(result.missing_keys, save=True)
+    keys_to_remove = result.missing_keys + result.out_of_folder_keys
+    if not dry_run and keys_to_remove:
+        removed_keys = state.remove_keys(keys_to_remove, save=True)
         result.removed = len(removed_keys)
     elif dry_run:
         result.removed = 0
@@ -207,9 +207,77 @@ def verify_import_records(
     log(f"checked: {result.checked}")
     log(f"alive: {result.alive}")
     log(f"missing: {result.missing}")
+    log(f"alive_but_not_in_folder: {result.alive_but_not_in_folder}")
     log(f"unknown: {result.unknown}")
     log(f"removed: {result.removed}")
     return result
+
+
+def _verify_record_with_folder(
+    key: str,
+    eagle_item_id: str,
+    folder_id: str,
+    *,
+    eagle: EagleClient,
+    result: VerifyImportsResult,
+    log: LogFn,
+) -> None:
+    try:
+        status = eagle.item_exists_in_folder(eagle_item_id, folder_id)
+    except EagleApiError as exc:
+        result.unknown += 1
+        log(f"warning: could not verify Eagle item folder membership {eagle_item_id} for {key}: {exc}")
+        return
+
+    if status == ITEM_ALIVE_IN_FOLDER:
+        result.alive += 1
+        log(f"alive: {key}")
+        return
+
+    if status == ITEM_ALIVE_BUT_NOT_IN_FOLDER:
+        result.alive_but_not_in_folder += 1
+        result.out_of_folder_keys.append(key)
+        log(f"alive_but_not_in_folder: {key}")
+        return
+
+    if status == ITEM_MISSING:
+        result.missing += 1
+        result.missing_keys.append(key)
+        log(f"missing: {key}")
+        return
+
+    result.unknown += 1
+    log(f"warning: Eagle item folder status is unknown for {key}: {eagle_item_id}")
+
+
+def _verify_record_exists(
+    key: str,
+    eagle_item_id: str,
+    *,
+    eagle: EagleClient,
+    result: VerifyImportsResult,
+    log: LogFn,
+) -> None:
+    try:
+        exists = eagle.item_exists(eagle_item_id)
+    except EagleApiError as exc:
+        result.unknown += 1
+        log(f"warning: could not verify Eagle item {eagle_item_id} for {key}: {exc}")
+        return
+
+    if exists is True:
+        result.alive += 1
+        log(f"alive: {key}")
+        return
+
+    if exists is False:
+        result.missing += 1
+        result.missing_keys.append(key)
+        log(f"missing: {key}")
+        return
+
+    result.unknown += 1
+    log(f"warning: Eagle item status is unknown for {key}: {eagle_item_id}")
 
 
 def _log_dry_run_plan(

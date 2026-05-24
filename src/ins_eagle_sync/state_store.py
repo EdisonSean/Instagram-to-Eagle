@@ -46,15 +46,19 @@ class ImportedState:
         import_item: Any,
         *,
         eagle_item_id: str | None = None,
+        folder_id: str | None = None,
         imported_at: str | None = None,
     ) -> None:
-        self.records[import_item.unique_key] = {
+        record = {
             "file_path": str(import_item.file_path),
             "website": import_item.website,
             "title": import_item.title,
             "eagle_item_id": eagle_item_id or "",
             "imported_at": imported_at or _utc_now(),
         }
+        if folder_id:
+            record["folder_id"] = folder_id
+        self.records[import_item.unique_key] = record
 
     def has_imported(self, shortcode: str, media_index: int) -> bool:
         return import_key(shortcode, media_index) in self.records

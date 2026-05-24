@@ -11,6 +11,13 @@ class EagleApiError(RuntimeError):
     pass
 
 
+ITEM_ALIVE = "alive"
+ITEM_MISSING = "missing"
+ITEM_UNKNOWN = "unknown"
+ITEM_ALIVE_IN_FOLDER = "alive_in_folder"
+ITEM_ALIVE_BUT_NOT_IN_FOLDER = "alive_but_not_in_folder"
+
+
 class EagleClient:
     def __init__(self, api_base: str) -> None:
         self.api_base = api_base.rstrip("/")
@@ -46,6 +53,29 @@ class EagleClient:
         if not data:
             return False
         return data.get("isDeleted") is not True
+
+    def item_exists_in_folder(self, item_id: str, folder_id: str) -> str:
+        data = self.get_item_info(item_id)
+        if not data or data.get("isDeleted") is True:
+            return ITEM_MISSING
+
+        if _has_folder_info(data):
+            return ITEM_ALIVE_IN_FOLDER if _item_is_in_folder(data, folder_id) else ITEM_ALIVE_BUT_NOT_IN_FOLDER
+
+        if self._item_list_confirms_item_in_folder(item_id, folder_id, data):
+            return ITEM_ALIVE_IN_FOLDER
+        return ITEM_ALIVE_BUT_NOT_IN_FOLDER
+
+    def _item_list_confirms_item_in_folder(
+        self,
+        item_id: str,
+        folder_id: str,
+        item_info: dict[str, Any],
+    ) -> bool:
+        for item in self.list_items(folder_id=folder_id):
+            if _listed_item_confirms_folder_membership(item, item_id, item_info):
+                return True
+        return False
 
     def add_item_from_path(
         self,
@@ -245,7 +275,7 @@ def _is_not_found_response(status_code: int, payload: Any) -> bool:
             "does not exist",
             "not exist",
             "missing",
-            "不存在",
+            "\u4e0d\u5b58\u5728",
         )
     )
 
@@ -284,11 +314,33 @@ def _item_matches_import_item(item: dict[str, Any], import_item: Any, folder_id:
 
 
 def _item_is_in_folder(item: dict[str, Any], folder_id: str) -> bool:
+    return folder_id in _extract_folder_ids(item)
+
+
+def _has_folder_info(item: dict[str, Any]) -> bool:
+    return any(key in item for key in ("folderId", "folder_id", "folderIds", "folder_ids", "parent", "folders"))
+
+
+def _extract_folder_ids(item: dict[str, Any]) -> set[str]:
     folder_values: set[str] = set()
     for key in ("folderId", "folder_id"):
         value = item.get(key)
         if value:
             folder_values.add(str(value))
+
+    for key in ("folderIds", "folder_ids"):
+        values = item.get(key)
+        if isinstance(values, list):
+            folder_values.update(str(value) for value in values if value)
+
+    parent = item.get("parent")
+    if isinstance(parent, dict):
+        for key in ("id", "folderId", "folder_id"):
+            value = parent.get(key)
+            if value:
+                folder_values.add(str(value))
+    elif parent:
+        folder_values.add(str(parent))
 
     folders = item.get("folders")
     if isinstance(folders, list):
@@ -301,7 +353,26 @@ def _item_is_in_folder(item: dict[str, Any], folder_id: str) -> bool:
             elif folder:
                 folder_values.add(str(folder))
 
-    return folder_id in folder_values
+    return folder_values
+
+
+def _listed_item_confirms_folder_membership(
+    item: dict[str, Any],
+    item_id: str,
+    item_info: dict[str, Any],
+) -> bool:
+    listed_id = str(item.get("id") or "")
+    if listed_id:
+        return listed_id == item_id
+
+    info_url = str(item_info.get("url") or item_info.get("website") or "")
+    item_url = str(item.get("url") or item.get("website") or "")
+    if not info_url or item_url != info_url:
+        return False
+
+    info_annotation = _normalize_multiline_text(str(item_info.get("annotation") or ""))
+    item_annotation = _normalize_multiline_text(str(item.get("annotation") or ""))
+    return bool(info_annotation and item_annotation == info_annotation)
 
 
 def _annotation_has_shortcode(annotation: str, shortcode: str) -> bool:
@@ -312,14 +383,14 @@ def _annotation_has_media_index(annotation: str, media_index: int) -> bool:
     index = f"{media_index:02d}"
     return _annotation_has_labeled_value(
         annotation,
-        ["序号", "Index", "Media Index", "搴忓彿"],
+        ["\u5e8f\u53f7", "Index", "Media Index", "搴忓彿"],
         index,
     )
 
 
 def _annotation_has_labeled_value(annotation: str, labels: list[str], value: str) -> bool:
     for label in labels:
-        pattern = rf"{re.escape(label)}\s*[:：]\s*{re.escape(value)}(?=$|[^\w-])"
+        pattern = rf"{re.escape(label)}\s*[:\uff1a]\s*{re.escape(value)}(?=$|[^\w-])"
         if re.search(pattern, annotation, flags=re.IGNORECASE):
             return True
     return False
