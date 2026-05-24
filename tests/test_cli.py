@@ -256,3 +256,116 @@ def test_sync_post_success_imports_downloaded_staging_items(project_tmp_path):
     assert import_mock.call_args.args[0] == [fake_item]
     assert import_mock.call_args.kwargs["folder_id"] == "folder-1"
     assert import_mock.call_args.kwargs["force"] is True
+
+
+def test_sync_author_dry_run_prints_download_and_import_plan(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    target_dir = project_tmp_path / "staging" / "quinn.xyz"
+    request = type("FakeRequest", (), {"target_dir": target_dir})()
+
+    with (
+        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request) as request_mock,
+        patch("ins_eagle_sync.cli.run_gallery_dl", return_value=None) as run_mock,
+        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[]) as scan_mock,
+        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
+    ):
+        import_mock.return_value.failed = 0
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "sync-author",
+                "https://www.instagram.com/quinn.xyz/",
+                "--folder-id",
+                "folder-1",
+                "--dry-run",
+                "--force",
+                "--max-posts",
+                "12",
+                "--show-annotation",
+                "--ignore-archive",
+                "--verbose-gallery-dl",
+            ]
+        )
+
+    assert exit_code == 0
+    request_mock.assert_called_once()
+    assert request_mock.call_args.args[1] == "https://www.instagram.com/quinn.xyz/"
+    assert request_mock.call_args.kwargs["ignore_archive"] is True
+    assert request_mock.call_args.kwargs["verbose"] is True
+    assert request_mock.call_args.kwargs["max_posts"] == 12
+    assert run_mock.call_args.kwargs["dry_run"] is True
+    assert run_mock.call_args.kwargs["ignore_archive"] is True
+    assert run_mock.call_args.kwargs["verbose"] is True
+    assert run_mock.call_args.kwargs["max_posts"] == 12
+    scan_mock.assert_called_once_with(target_dir, title_caption_chars=70)
+    assert import_mock.call_args.kwargs["dry_run"] is True
+    assert import_mock.call_args.kwargs["force"] is True
+    assert import_mock.call_args.kwargs["show_annotation"] is True
+
+
+def test_sync_author_gallery_dl_failure_does_not_import(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    target_dir = project_tmp_path / "staging" / "quinn.xyz"
+    request = type("FakeRequest", (), {"target_dir": target_dir})()
+
+    with (
+        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
+        patch(
+            "ins_eagle_sync.cli.run_gallery_dl",
+            return_value=CompletedProcess(args=["py"], returncode=4, stdout="", stderr="login"),
+        ),
+        patch("ins_eagle_sync.cli.scan_staging_dir") as scan_mock,
+        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
+    ):
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "sync-author",
+                "https://www.instagram.com/quinn.xyz/",
+                "--folder-id",
+                "folder-1",
+            ]
+        )
+
+    assert exit_code == 4
+    scan_mock.assert_not_called()
+    import_mock.assert_not_called()
+
+
+def test_sync_author_success_imports_author_staging_items(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    target_dir = project_tmp_path / "staging" / "quinn.xyz"
+    request = type("FakeRequest", (), {"target_dir": target_dir})()
+    fake_item = object()
+
+    with (
+        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
+        patch(
+            "ins_eagle_sync.cli.run_gallery_dl",
+            return_value=CompletedProcess(args=["py"], returncode=0, stdout="", stderr=""),
+        ) as run_mock,
+        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[fake_item]) as scan_mock,
+        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
+    ):
+        import_mock.return_value.failed = 0
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "sync-author",
+                "https://www.instagram.com/quinn.xyz/",
+                "--folder-id",
+                "folder-1",
+            ]
+        )
+
+    assert exit_code == 0
+    assert run_mock.call_args.kwargs["dry_run"] is False
+    scan_mock.assert_called_once_with(target_dir, title_caption_chars=70)
+    assert import_mock.call_args.args[0] == [fake_item]
+    assert import_mock.call_args.kwargs["folder_id"] == "folder-1"

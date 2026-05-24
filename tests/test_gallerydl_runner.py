@@ -83,6 +83,19 @@ def test_build_gallery_dl_request_can_enable_verbose(project_tmp_path):
     assert "--verbose" in request.command
 
 
+def test_build_gallery_dl_request_can_override_max_posts(project_tmp_path):
+    config = make_config(project_tmp_path)
+
+    request = build_gallery_dl_request(
+        config,
+        "https://www.instagram.com/quinn.xyz/",
+        max_posts=12,
+    )
+
+    range_index = request.command.index("--range")
+    assert request.command[range_index + 1] == "1-12"
+
+
 def test_dry_run_logs_command_without_calling_subprocess(project_tmp_path):
     config = make_config(project_tmp_path)
     logs = []

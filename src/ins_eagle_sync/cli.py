@@ -50,6 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
     sync_post_parser.add_argument("--ignore-archive", action="store_true")
     sync_post_parser.add_argument("--verbose-gallery-dl", action="store_true")
 
+    sync_author_parser = subparsers.add_parser("sync-author", help="Download and import an Instagram author.")
+    sync_author_parser.add_argument("author_url")
+    sync_author_parser.add_argument("--folder-id", required=True)
+    sync_author_parser.add_argument("--dry-run", action="store_true")
+    sync_author_parser.add_argument("--force", action="store_true")
+    sync_author_parser.add_argument("--max-posts", type=int)
+    sync_author_parser.add_argument("--show-annotation", action="store_true")
+    sync_author_parser.add_argument("--ignore-archive", action="store_true")
+    sync_author_parser.add_argument("--verbose-gallery-dl", action="store_true")
+
     forget_import_parser = subparsers.add_parser("forget-import", help="Remove records from imported state.")
     forget_import_parser.add_argument("--unique-key")
     forget_import_parser.add_argument("--username")
@@ -168,6 +178,45 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             ignore_archive=args.ignore_archive,
             verbose=args.verbose_gallery_dl,
+            log=safe_print,
+        )
+        if download_result is not None and download_result.returncode != 0:
+            return download_result.returncode
+
+        items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
+        state = ImportedState.load(config.imported_state)
+        eagle = EagleClient(config.eagle_api_base)
+        import_result = import_staging_items(
+            items,
+            eagle=eagle,
+            state=state,
+            folder_id=args.folder_id,
+            dry_run=args.dry_run,
+            force=args.force,
+            show_annotation=args.show_annotation,
+            log=safe_print,
+        )
+        return 1 if import_result.failed else 0
+
+    if args.command == "sync-author":
+        info = detect_instagram_url(args.author_url)
+        if info.mode.value != "author":
+            raise SystemExit("sync-author requires an author URL, e.g. https://www.instagram.com/username/")
+
+        request = build_gallery_dl_request(
+            config,
+            info.normalized_url,
+            ignore_archive=args.ignore_archive,
+            verbose=args.verbose_gallery_dl,
+            max_posts=args.max_posts,
+        )
+        download_result = run_gallery_dl(
+            config,
+            info.normalized_url,
+            dry_run=args.dry_run,
+            ignore_archive=args.ignore_archive,
+            verbose=args.verbose_gallery_dl,
+            max_posts=args.max_posts,
             log=safe_print,
         )
         if download_result is not None and download_result.returncode != 0:

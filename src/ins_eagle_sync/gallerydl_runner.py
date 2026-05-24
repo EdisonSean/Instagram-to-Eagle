@@ -29,6 +29,7 @@ def build_gallery_dl_request(
     *,
     ignore_archive: bool = False,
     verbose: bool = False,
+    max_posts: int | None = None,
 ) -> GalleryDlRequest:
     info = detect_instagram_url(url)
     target_dir = build_target_dir(config, url)
@@ -43,6 +44,7 @@ def build_gallery_dl_request(
             target_dir,
             ignore_archive=ignore_archive,
             verbose=verbose,
+            max_posts=max_posts,
         ),
     )
 
@@ -68,7 +70,9 @@ def build_gallery_dl_command(
     *,
     ignore_archive: bool = False,
     verbose: bool = False,
+    max_posts: int | None = None,
 ) -> list[str]:
+    effective_max_posts = max_posts if max_posts is not None else config.download.max_posts
     command = shlex.split(config.gallery_dl_executable)
     command.append("--config-ignore")
     if verbose:
@@ -82,7 +86,7 @@ def build_gallery_dl_command(
             "--sleep-request",
             config.download.sleep_request,
             "--range",
-            f"1-{config.download.max_posts}",
+            f"1-{effective_max_posts}",
             "--directory",
             str(target_dir),
             url,
@@ -111,6 +115,7 @@ def run_gallery_dl(
     dry_run: bool = False,
     ignore_archive: bool = False,
     verbose: bool = False,
+    max_posts: int | None = None,
     log: LogFn = print,
 ) -> subprocess.CompletedProcess[str] | None:
     request = build_gallery_dl_request(
@@ -118,6 +123,7 @@ def run_gallery_dl(
         url,
         ignore_archive=ignore_archive,
         verbose=verbose,
+        max_posts=max_posts,
     )
     log_gallery_dl_request(request, dry_run=dry_run, log=log)
 
