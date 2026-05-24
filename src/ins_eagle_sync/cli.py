@@ -6,11 +6,8 @@ import sys
 from pathlib import Path
 
 from .config import load_config
-from .eagle_client import EagleClient
-from .gallerydl_runner import build_gallery_dl_request, run_gallery_dl
-from .importer import import_staging_items, verify_import_records
-from .metadata_parser import scan_staging_dir
-from .state_store import ImportedState
+from .gallerydl_runner import run_gallery_dl
+from . import services
 from .utils import detect_instagram_url
 
 
@@ -116,19 +113,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "parse-staging":
         config = load_config(resolve_config_path(args.config))
-        items = scan_staging_dir(Path(args.staging_dir), title_caption_chars=config.title_caption_chars)
+        result = services.parse_staging(config, args.staging_dir)
         safe_print(
             json.dumps(
-                [
-                    {
-                        "file_path": str(item.file_path),
-                        "title": item.title,
-                        "website": item.website,
-                        "tags": item.tags,
-                        "unique_key": item.unique_key,
-                    }
-                    for item in items
-                ],
+                result["items"],
                 ensure_ascii=False,
                 indent=2,
             )
@@ -138,79 +126,48 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(resolve_config_path(args.config))
 
     if args.command == "list-folders":
-        eagle = EagleClient(config.eagle_api_base)
-        try:
-            folders = eagle.list_folders()
-        except Exception as exc:  # noqa: BLE001 - convert API failures into CLI errors.
-            safe_print(f"error: {exc}")
+        result = services.list_folders(config)
+        if not result["ok"]:
+            _print_messages(result)
             return 1
-        safe_print(json.dumps(folders, ensure_ascii=False, indent=2))
+        safe_print(json.dumps(result["folders"], ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "ensure-folder":
-        eagle = EagleClient(config.eagle_api_base)
-        try:
-            folder_id = eagle.ensure_folder_path(args.folder_path)
-        except Exception as exc:  # noqa: BLE001 - convert API failures into CLI errors.
-            safe_print(f"error: {exc}")
+        result = services.ensure_folder(config, args.folder_path)
+        _print_messages(result)
+        if not result["ok"]:
             return 1
-        safe_print(f"folder id: {folder_id}")
         return 0
 
     if args.command == "import-staging":
-        items = scan_staging_dir(Path(args.staging_dir), title_caption_chars=config.title_caption_chars)
-        state = ImportedState.load(config.imported_state)
-        eagle = EagleClient(config.eagle_api_base)
-        folder_id = resolve_target_folder_id(args, eagle=eagle, dry_run=args.dry_run, log=safe_print)
-        if folder_id is None:
-            return 1
-        result = import_staging_items(
-            items,
-            eagle=eagle,
-            state=state,
-            folder_id=folder_id,
+        result = services.import_staging(
+            config,
+            args.staging_dir,
+            folder_id=args.folder_id,
+            folder_path=args.folder_path,
             dry_run=args.dry_run,
             force=args.force,
             verify_eagle=args.verify_eagle,
             show_annotation=args.show_annotation,
             log=safe_print,
         )
-        return 1 if result.failed else 0
+        return 0 if result["ok"] else 1
 
     if args.command == "forget-import":
-        if not args.unique_key and not args.shortcode:
-            raise SystemExit("forget-import requires --unique-key or --shortcode")
-        if args.unique_key and (args.shortcode or args.username):
-            raise SystemExit("forget-import --unique-key cannot be combined with --username or --shortcode")
-        if args.username and not args.shortcode:
-            raise SystemExit("forget-import --username requires --shortcode")
-
-        state = ImportedState.load(config.imported_state)
-        result = state.forget(
+        result = services.forget_import(
+            config,
             unique_key=args.unique_key,
             shortcode=args.shortcode,
             username=args.username,
             dry_run=args.dry_run,
+            log=safe_print,
         )
-        safe_print(f"matched count: {result.matched_count}")
-        safe_print(f"removed count: {result.removed_count}")
-        safe_print("removed keys:")
-        for key in result.removed_keys:
-            safe_print(f"  {key}")
-        if result.backup_path is not None:
-            safe_print(f"backup: {result.backup_path}")
-        if result.matched_count == 0:
-            safe_print("No imported records matched the given selector.")
-        return 0
+        return 0 if result["ok"] else 1
 
     if args.command == "verify-imports":
-        if args.unique_key and (args.shortcode or args.username):
-            raise SystemExit("verify-imports --unique-key cannot be combined with --username or --shortcode")
-        state = ImportedState.load(config.imported_state)
-        eagle = EagleClient(config.eagle_api_base)
-        verify_import_records(
-            eagle=eagle,
-            state=state,
+        result = services.verify_imports(
+            config,
             unique_key=args.unique_key,
             shortcode=args.shortcode,
             username=args.username,
@@ -218,91 +175,40 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             log=safe_print,
         )
-        return 0
+        return 0 if result["ok"] else 1
 
     if args.command == "sync-post":
-        info = detect_instagram_url(args.post_url)
-        if info.mode.value != "post":
-            raise SystemExit("sync-post requires a post or reel URL.")
-
-        request = build_gallery_dl_request(
+        result = services.sync_post(
             config,
-            info.normalized_url,
-            ignore_archive=args.ignore_archive,
-            verbose=args.verbose_gallery_dl,
-        )
-        download_result = run_gallery_dl(
-            config,
-            info.normalized_url,
-            dry_run=args.dry_run,
-            ignore_archive=args.ignore_archive,
-            verbose=args.verbose_gallery_dl,
-            log=safe_print,
-        )
-        if download_result is not None and download_result.returncode != 0:
-            return download_result.returncode
-
-        items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
-        state = ImportedState.load(config.imported_state)
-        eagle = EagleClient(config.eagle_api_base)
-        folder_id = resolve_target_folder_id(args, eagle=eagle, dry_run=args.dry_run, log=safe_print)
-        if folder_id is None:
-            return 1
-        import_result = import_staging_items(
-            items,
-            eagle=eagle,
-            state=state,
-            folder_id=folder_id,
+            args.post_url,
+            folder_id=args.folder_id,
+            folder_path=args.folder_path,
             dry_run=args.dry_run,
             force=args.force,
             verify_eagle=args.verify_eagle,
             show_annotation=args.show_annotation,
+            ignore_archive=args.ignore_archive,
+            verbose_gallery_dl=args.verbose_gallery_dl,
             log=safe_print,
         )
-        return 1 if import_result.failed else 0
+        return result.get("returncode", 0 if result["ok"] else 1)
 
     if args.command == "sync-author":
-        info = detect_instagram_url(args.author_url)
-        if info.mode.value != "author":
-            raise SystemExit("sync-author requires an author URL, e.g. https://www.instagram.com/username/")
-
-        request = build_gallery_dl_request(
+        result = services.sync_author(
             config,
-            info.normalized_url,
-            ignore_archive=args.ignore_archive,
-            verbose=args.verbose_gallery_dl,
-            max_posts=args.max_posts,
-        )
-        download_result = run_gallery_dl(
-            config,
-            info.normalized_url,
-            dry_run=args.dry_run,
-            ignore_archive=args.ignore_archive,
-            verbose=args.verbose_gallery_dl,
-            max_posts=args.max_posts,
-            log=safe_print,
-        )
-        if download_result is not None and download_result.returncode != 0:
-            return download_result.returncode
-
-        items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
-        state = ImportedState.load(config.imported_state)
-        eagle = EagleClient(config.eagle_api_base)
-        folder_id = resolve_target_folder_id(args, eagle=eagle, dry_run=args.dry_run, log=safe_print)
-        if folder_id is None:
-            return 1
-        import_result = import_staging_items(
-            items,
-            eagle=eagle,
-            state=state,
-            folder_id=folder_id,
+            args.author_url,
+            folder_id=args.folder_id,
+            folder_path=args.folder_path,
             dry_run=args.dry_run,
             force=args.force,
             verify_eagle=args.verify_eagle,
+            max_posts=args.max_posts,
             show_annotation=args.show_annotation,
+            ignore_archive=args.ignore_archive,
+            verbose_gallery_dl=args.verbose_gallery_dl,
             log=safe_print,
         )
-        return 1 if import_result.failed else 0
+        return result.get("returncode", 0 if result["ok"] else 1)
 
     info = detect_instagram_url(args.url)
 
@@ -342,45 +248,16 @@ def resolve_config_path(config_path: str) -> Path:
     return path
 
 
-def resolve_target_folder_id(
-    args: argparse.Namespace,
-    *,
-    eagle: EagleClient,
-    dry_run: bool,
-    log=None,
-) -> str | None:
-    if log is None:
-        log = safe_print
-    folder_id = getattr(args, "folder_id", None)
-    folder_path = getattr(args, "folder_path", None)
-    if folder_id and folder_path:
-        log("error: --folder-id and --folder-path cannot be used together.")
-        return None
-
-    if folder_id:
-        return folder_id
-
-    if folder_path:
-        if dry_run:
-            log(f"dry-run: would ensure Eagle folder path: {folder_path}")
-            return f"<folder-path:{folder_path}>"
-        try:
-            resolved_folder_id = eagle.ensure_folder_path(folder_path)
-        except Exception as exc:  # noqa: BLE001 - convert API failures into CLI errors.
-            log(f"error: {exc}")
-            return None
-        log(f"resolved Eagle folder path '{folder_path}' to folder id: {resolved_folder_id}")
-        return resolved_folder_id
-
-    log("error: either --folder-id or --folder-path is required.")
-    return None
-
-
 def safe_print(message: object = "") -> None:
     text = str(message)
     encoding = sys.stdout.encoding or "utf-8"
     safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
     sys.stdout.write(safe_text + "\n")
+
+
+def _print_messages(result: dict[str, object]) -> None:
+    for message in result.get("messages", []):
+        safe_print(message)
 
 
 if __name__ == "__main__":

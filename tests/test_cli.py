@@ -1,7 +1,6 @@
 import json
 import sys
 from pathlib import Path
-from subprocess import CompletedProcess
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -43,33 +42,27 @@ def test_run_dry_run_invokes_gallerydl_runner_with_normalized_url():
 def test_parse_staging_prints_import_item_summary(project_tmp_path, capsys):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
-    fake_item = type(
-        "FakeImportItem",
-        (),
-        {
-            "file_path": Path("E:/stage/item.jpg"),
-            "title": "Caption",
-            "website": "https://www.instagram.com/p/ABC123/",
-            "tags": ["instagram", "author:user"],
-            "unique_key": "instagram:user:ABC123:01",
-        },
-    )()
+    service_result = {
+        "ok": True,
+        "total": 1,
+        "items": [
+            {
+                "file_path": "E:\\stage\\item.jpg",
+                "title": "Caption",
+                "website": "https://www.instagram.com/p/ABC123/",
+                "tags": ["instagram", "author:user"],
+                "unique_key": "instagram:user:ABC123:01",
+            }
+        ],
+        "messages": [],
+    }
 
-    with patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[fake_item]) as scan_mock:
+    with patch("ins_eagle_sync.cli.services.parse_staging", return_value=service_result) as service_mock:
         exit_code = main(["--config", str(config_path), "parse-staging", "E:/stage"])
 
     assert exit_code == 0
-    scan_mock.assert_called_once_with(Path("E:/stage"), title_caption_chars=70)
-    output = json.loads(capsys.readouterr().out)
-    assert output == [
-        {
-            "file_path": "E:\\stage\\item.jpg",
-            "title": "Caption",
-            "website": "https://www.instagram.com/p/ABC123/",
-            "tags": ["instagram", "author:user"],
-            "unique_key": "instagram:user:ABC123:01",
-        }
-    ]
+    assert service_mock.call_args.args[1] == "E:/stage"
+    assert json.loads(capsys.readouterr().out) == service_result["items"]
 
 
 def test_list_folders_cli_prints_folder_summary(project_tmp_path, capsys):
@@ -79,9 +72,8 @@ def test_list_folders_cli_prints_folder_summary(project_tmp_path, capsys):
         {"id": "root-1", "name": "Instagram", "parent_id": None, "path": "Instagram"},
         {"id": "child-1", "name": "quinn.xyz", "parent_id": "root-1", "path": "Instagram/quinn.xyz"},
     ]
-    fake_eagle = type("FakeEagle", (), {"list_folders": lambda self: folders})()
 
-    with patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle):
+    with patch("ins_eagle_sync.cli.services.list_folders", return_value={"ok": True, "folders": folders, "messages": []}):
         exit_code = main(["--config", str(config_path), "list-folders"])
 
     assert exit_code == 0
@@ -92,11 +84,10 @@ def test_list_folders_cli_outputs_clear_error(project_tmp_path, capsys):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
 
-    class FakeEagle:
-        def list_folders(self):
-            raise RuntimeError("Eagle is not available")
-
-    with patch("ins_eagle_sync.cli.EagleClient", return_value=FakeEagle()):
+    with patch(
+        "ins_eagle_sync.cli.services.list_folders",
+        return_value={"ok": False, "messages": ["error: Eagle is not available"]},
+    ):
         exit_code = main(["--config", str(config_path), "list-folders"])
 
     assert exit_code == 1
@@ -106,63 +97,23 @@ def test_list_folders_cli_outputs_clear_error(project_tmp_path, capsys):
 def test_ensure_folder_cli_prints_final_folder_id(project_tmp_path, capsys):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
-    fake_eagle = type("FakeEagle", (), {"ensure_folder_path": lambda self, path: "folder-1"})()
 
-    with patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle):
+    with patch(
+        "ins_eagle_sync.cli.services.ensure_folder",
+        return_value={"ok": True, "folder_id": "folder-1", "messages": ["folder id: folder-1"]},
+    ) as service_mock:
         exit_code = main(["--config", str(config_path), "ensure-folder", "Instagram/quinn.xyz"])
 
     assert exit_code == 0
+    assert service_mock.call_args.args[1] == "Instagram/quinn.xyz"
     assert "folder id: folder-1" in capsys.readouterr().out
 
 
-def test_import_staging_dry_run_uses_state_and_importer(project_tmp_path):
+def test_import_staging_calls_service(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
 
-    with (
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[]) as scan_mock,
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        import_mock.return_value.failed = 0
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "import-staging",
-                str(project_tmp_path / "staging"),
-                "--folder-id",
-                "folder-1",
-                "--dry-run",
-                "--verify-eagle",
-            ]
-        )
-
-    assert exit_code == 0
-    scan_mock.assert_called_once_with(project_tmp_path / "staging", title_caption_chars=70)
-    assert import_mock.call_args.kwargs["folder_id"] == "folder-1"
-    assert import_mock.call_args.kwargs["dry_run"] is True
-    assert import_mock.call_args.kwargs["verify_eagle"] is True
-
-
-def test_import_staging_uses_folder_path_when_no_folder_id(project_tmp_path):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-
-    class FakeEagle:
-        def __init__(self):
-            self.ensure_calls = []
-
-        def ensure_folder_path(self, folder_path):
-            self.ensure_calls.append(folder_path)
-            return "folder-from-path"
-
-    fake_eagle = FakeEagle()
-    with (
-        patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle),
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[]),
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        import_mock.return_value.failed = 0
+    with patch("ins_eagle_sync.cli.services.import_staging", return_value={"ok": True, "messages": []}) as service_mock:
         exit_code = main(
             [
                 "--config",
@@ -171,22 +122,23 @@ def test_import_staging_uses_folder_path_when_no_folder_id(project_tmp_path):
                 str(project_tmp_path / "staging"),
                 "--folder-path",
                 "Instagram/quinn.xyz",
+                "--dry-run",
+                "--verify-eagle",
             ]
         )
 
     assert exit_code == 0
-    assert fake_eagle.ensure_calls == ["Instagram/quinn.xyz"]
-    assert import_mock.call_args.kwargs["folder_id"] == "folder-from-path"
+    assert service_mock.call_args.args[1] == str(project_tmp_path / "staging")
+    assert service_mock.call_args.kwargs["folder_path"] == "Instagram/quinn.xyz"
+    assert service_mock.call_args.kwargs["dry_run"] is True
+    assert service_mock.call_args.kwargs["verify_eagle"] is True
 
 
-def test_import_staging_rejects_folder_id_and_folder_path_together(project_tmp_path, capsys):
+def test_import_staging_returns_1_when_service_fails(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
 
-    with (
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[]),
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
+    with patch("ins_eagle_sync.cli.services.import_staging", return_value={"ok": False, "messages": []}):
         exit_code = main(
             [
                 "--config",
@@ -201,117 +153,89 @@ def test_import_staging_rejects_folder_id_and_folder_path_together(project_tmp_p
         )
 
     assert exit_code == 1
-    import_mock.assert_not_called()
-    assert "--folder-id and --folder-path cannot be used together" in capsys.readouterr().out
 
 
-def test_forget_import_cli_dry_run_does_not_modify_state(project_tmp_path, capsys):
+def test_forget_import_cli_calls_service(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
-    state_path = project_tmp_path / "imported.json"
-    original_records = {
-        "instagram:quinn.xyz:DYld7hQCT90:01": {"title": "one"},
-        "instagram:quinn.xyz:DYld7hQCT90:02": {"title": "two"},
-    }
-    state_path.write_text(json.dumps(original_records, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    exit_code = main(
-        [
-            "--config",
-            str(config_path),
-            "forget-import",
-            "--shortcode",
-            "DYld7hQCT90",
-            "--dry-run",
-        ]
-    )
+    with patch("ins_eagle_sync.cli.services.forget_import", return_value={"ok": True, "messages": []}) as service_mock:
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "forget-import",
+                "--shortcode",
+                "DYld7hQCT90",
+                "--dry-run",
+            ]
+        )
 
     assert exit_code == 0
-    assert json.loads(state_path.read_text(encoding="utf-8")) == original_records
-    output = capsys.readouterr().out
-    assert "matched count: 2" in output
-    assert "removed count: 0" in output
-    assert "instagram:quinn.xyz:DYld7hQCT90:01" in output
+    assert service_mock.call_args.kwargs["shortcode"] == "DYld7hQCT90"
+    assert service_mock.call_args.kwargs["dry_run"] is True
 
 
-def test_forget_import_cli_missing_record_outputs_clear_message(project_tmp_path, capsys):
+def test_verify_imports_cli_calls_service(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
-    state_path = project_tmp_path / "imported.json"
-    state_path.write_text("{}", encoding="utf-8")
 
-    exit_code = main(
-        [
-            "--config",
-            str(config_path),
-            "forget-import",
-            "--unique-key",
-            "instagram:quinn.xyz:MISSING:01",
-        ]
-    )
+    with patch("ins_eagle_sync.cli.services.verify_imports", return_value={"ok": True, "messages": []}) as service_mock:
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "verify-imports",
+                "--shortcode",
+                "DYld7hQCT90",
+                "--folder-id",
+                "folder-1",
+                "--dry-run",
+            ]
+        )
 
     assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "matched count: 0" in output
-    assert "No imported records matched" in output
+    assert service_mock.call_args.kwargs["shortcode"] == "DYld7hQCT90"
+    assert service_mock.call_args.kwargs["folder_id"] == "folder-1"
+    assert service_mock.call_args.kwargs["dry_run"] is True
 
 
-def test_sync_post_dry_run_prints_download_and_import_plan(project_tmp_path):
+def test_sync_post_calls_service(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
-    target_dir = project_tmp_path / "staging" / "unknown" / "ABC123"
-    request = type("FakeRequest", (), {"target_dir": target_dir})()
 
-    with (
-        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request) as request_mock,
-        patch("ins_eagle_sync.cli.run_gallery_dl", return_value=None) as run_mock,
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[]) as scan_mock,
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        import_mock.return_value.failed = 0
+    with patch("ins_eagle_sync.cli.services.sync_post", return_value={"ok": True, "messages": []}) as service_mock:
         exit_code = main(
             [
                 "--config",
                 str(config_path),
                 "sync-post",
                 "https://www.instagram.com/p/ABC123/",
-                "--folder-id",
-                "folder-1",
+                "--folder-path",
+                "Instagram/quinn.xyz",
                 "--dry-run",
                 "--verify-eagle",
-                "--show-annotation",
                 "--ignore-archive",
                 "--verbose-gallery-dl",
             ]
         )
 
     assert exit_code == 0
-    request_mock.assert_called_once()
-    assert request_mock.call_args.kwargs["ignore_archive"] is True
-    assert request_mock.call_args.kwargs["verbose"] is True
-    assert run_mock.call_args.kwargs["dry_run"] is True
-    assert run_mock.call_args.kwargs["ignore_archive"] is True
-    assert run_mock.call_args.kwargs["verbose"] is True
-    scan_mock.assert_called_once_with(target_dir, title_caption_chars=70)
-    assert import_mock.call_args.kwargs["dry_run"] is True
-    assert import_mock.call_args.kwargs["verify_eagle"] is True
-    assert import_mock.call_args.kwargs["show_annotation"] is True
+    assert service_mock.call_args.args[1] == "https://www.instagram.com/p/ABC123/"
+    assert service_mock.call_args.kwargs["folder_path"] == "Instagram/quinn.xyz"
+    assert service_mock.call_args.kwargs["dry_run"] is True
+    assert service_mock.call_args.kwargs["verify_eagle"] is True
+    assert service_mock.call_args.kwargs["ignore_archive"] is True
+    assert service_mock.call_args.kwargs["verbose_gallery_dl"] is True
 
 
-def test_sync_post_gallery_dl_failure_does_not_import(project_tmp_path):
+def test_sync_post_returns_gallery_dl_failure_code(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
-    target_dir = project_tmp_path / "staging" / "unknown" / "ABC123"
-    request = type("FakeRequest", (), {"target_dir": target_dir})()
 
-    with (
-        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
-        patch(
-            "ins_eagle_sync.cli.run_gallery_dl",
-            return_value=CompletedProcess(args=["py"], returncode=4, stdout="", stderr="login"),
-        ),
-        patch("ins_eagle_sync.cli.scan_staging_dir") as scan_mock,
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
+    with patch(
+        "ins_eagle_sync.cli.services.sync_post",
+        return_value={"ok": False, "returncode": 4, "messages": []},
     ):
         exit_code = main(
             [
@@ -325,111 +249,21 @@ def test_sync_post_gallery_dl_failure_does_not_import(project_tmp_path):
         )
 
     assert exit_code == 4
-    scan_mock.assert_not_called()
-    import_mock.assert_not_called()
 
 
-def test_sync_post_success_imports_downloaded_staging_items(project_tmp_path):
+def test_sync_author_calls_service(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
-    target_dir = project_tmp_path / "staging" / "unknown" / "ABC123"
-    request = type("FakeRequest", (), {"target_dir": target_dir})()
-    fake_item = object()
 
-    with (
-        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
-        patch(
-            "ins_eagle_sync.cli.run_gallery_dl",
-            return_value=CompletedProcess(args=["py"], returncode=0, stdout="", stderr=""),
-        ) as run_mock,
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[fake_item]) as scan_mock,
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        import_mock.return_value.failed = 0
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "sync-post",
-                "https://www.instagram.com/p/ABC123/",
-                "--folder-id",
-                "folder-1",
-                "--force",
-            ]
-        )
-
-    assert exit_code == 0
-    assert run_mock.call_args.kwargs["dry_run"] is False
-    scan_mock.assert_called_once_with(target_dir, title_caption_chars=70)
-    assert import_mock.call_args.args[0] == [fake_item]
-    assert import_mock.call_args.kwargs["folder_id"] == "folder-1"
-    assert import_mock.call_args.kwargs["force"] is True
-
-
-def test_sync_post_uses_folder_path(project_tmp_path):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-    target_dir = project_tmp_path / "staging" / "unknown" / "ABC123"
-    request = type("FakeRequest", (), {"target_dir": target_dir})()
-    fake_item = object()
-
-    class FakeEagle:
-        def __init__(self):
-            self.ensure_calls = []
-
-        def ensure_folder_path(self, folder_path):
-            self.ensure_calls.append(folder_path)
-            return "folder-from-path"
-
-    fake_eagle = FakeEagle()
-    with (
-        patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle),
-        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
-        patch(
-            "ins_eagle_sync.cli.run_gallery_dl",
-            return_value=CompletedProcess(args=["py"], returncode=0, stdout="", stderr=""),
-        ),
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[fake_item]),
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        import_mock.return_value.failed = 0
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "sync-post",
-                "https://www.instagram.com/p/ABC123/",
-                "--folder-path",
-                "Instagram/quinn.xyz",
-            ]
-        )
-
-    assert exit_code == 0
-    assert fake_eagle.ensure_calls == ["Instagram/quinn.xyz"]
-    assert import_mock.call_args.kwargs["folder_id"] == "folder-from-path"
-
-
-def test_sync_author_dry_run_prints_download_and_import_plan(project_tmp_path):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-    target_dir = project_tmp_path / "staging" / "quinn.xyz"
-    request = type("FakeRequest", (), {"target_dir": target_dir})()
-
-    with (
-        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request) as request_mock,
-        patch("ins_eagle_sync.cli.run_gallery_dl", return_value=None) as run_mock,
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[]) as scan_mock,
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        import_mock.return_value.failed = 0
+    with patch("ins_eagle_sync.cli.services.sync_author", return_value={"ok": True, "messages": []}) as service_mock:
         exit_code = main(
             [
                 "--config",
                 str(config_path),
                 "sync-author",
                 "https://www.instagram.com/quinn.xyz/",
-                "--folder-id",
-                "folder-1",
+                "--folder-path",
+                "Instagram/quinn.xyz",
                 "--dry-run",
                 "--force",
                 "--verify-eagle",
@@ -442,240 +276,10 @@ def test_sync_author_dry_run_prints_download_and_import_plan(project_tmp_path):
         )
 
     assert exit_code == 0
-    request_mock.assert_called_once()
-    assert request_mock.call_args.args[1] == "https://www.instagram.com/quinn.xyz/"
-    assert request_mock.call_args.kwargs["ignore_archive"] is True
-    assert request_mock.call_args.kwargs["verbose"] is True
-    assert request_mock.call_args.kwargs["max_posts"] == 12
-    assert run_mock.call_args.kwargs["dry_run"] is True
-    assert run_mock.call_args.kwargs["ignore_archive"] is True
-    assert run_mock.call_args.kwargs["verbose"] is True
-    assert run_mock.call_args.kwargs["max_posts"] == 12
-    scan_mock.assert_called_once_with(target_dir, title_caption_chars=70)
-    assert import_mock.call_args.kwargs["dry_run"] is True
-    assert import_mock.call_args.kwargs["force"] is True
-    assert import_mock.call_args.kwargs["verify_eagle"] is True
-    assert import_mock.call_args.kwargs["show_annotation"] is True
-
-
-class FakeCliEagle:
-    def __init__(self, existing_item_ids=None, item_folder_statuses=None):
-        self.existing_item_ids = set(existing_item_ids or [])
-        self.item_folder_statuses = item_folder_statuses or {}
-        self.item_exists_calls = []
-        self.item_exists_in_folder_calls = []
-
-    def item_exists(self, item_id):
-        self.item_exists_calls.append(item_id)
-        return item_id in self.existing_item_ids
-
-    def item_exists_in_folder(self, item_id, folder_id):
-        self.item_exists_in_folder_calls.append((item_id, folder_id))
-        return self.item_folder_statuses[item_id]
-
-
-def test_verify_imports_cli_dry_run_does_not_modify_state(project_tmp_path, capsys):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-    state_path = project_tmp_path / "imported.json"
-    records = {
-        "instagram:quinn.xyz:DYld7hQCT90:01": {"eagle_item_id": "missing"},
-        "instagram:quinn.xyz:DYld7hQCT90:02": {"eagle_item_id": "alive"},
-    }
-    state_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-    fake_eagle = FakeCliEagle(existing_item_ids={"alive"})
-
-    with patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle):
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "verify-imports",
-                "--shortcode",
-                "DYld7hQCT90",
-                "--dry-run",
-            ]
-        )
-
-    assert exit_code == 0
-    assert json.loads(state_path.read_text(encoding="utf-8")) == records
-    output = capsys.readouterr().out
-    assert "checked: 2" in output
-    assert "alive: 1" in output
-    assert "missing: 1" in output
-    assert "removed: 0" in output
-    assert "missing: instagram:quinn.xyz:DYld7hQCT90:01" in output
-
-
-def test_verify_imports_cli_removes_missing_records(project_tmp_path, capsys):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-    state_path = project_tmp_path / "imported.json"
-    records = {
-        "instagram:quinn.xyz:DYld7hQCT90:01": {"eagle_item_id": "missing"},
-        "instagram:quinn.xyz:DYld7hQCT90:02": {"eagle_item_id": "alive"},
-    }
-    state_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-    fake_eagle = FakeCliEagle(existing_item_ids={"alive"})
-
-    with patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle):
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "verify-imports",
-                "--username",
-                "quinn.xyz",
-                "--shortcode",
-                "DYld7hQCT90",
-            ]
-        )
-
-    assert exit_code == 0
-    loaded = json.loads(state_path.read_text(encoding="utf-8"))
-    assert "instagram:quinn.xyz:DYld7hQCT90:01" not in loaded
-    assert "instagram:quinn.xyz:DYld7hQCT90:02" in loaded
-    output = capsys.readouterr().out
-    assert "checked: 2" in output
-    assert "removed: 1" in output
-
-
-def test_verify_imports_cli_with_folder_id_reports_out_of_folder(project_tmp_path, capsys):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-    state_path = project_tmp_path / "imported.json"
-    records = {
-        "instagram:quinn.xyz:DYld7hQCT90:01": {"eagle_item_id": "outside", "folder_id": "folder-1"},
-    }
-    state_path.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
-    fake_eagle = FakeCliEagle(item_folder_statuses={"outside": "alive_but_not_in_folder"})
-
-    with patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle):
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "verify-imports",
-                "--shortcode",
-                "DYld7hQCT90",
-                "--folder-id",
-                "folder-1",
-                "--dry-run",
-            ]
-        )
-
-    assert exit_code == 0
-    assert json.loads(state_path.read_text(encoding="utf-8")) == records
-    assert fake_eagle.item_exists_in_folder_calls == [("outside", "folder-1")]
-    output = capsys.readouterr().out
-    assert "alive_but_not_in_folder: 1" in output
-    assert "removed: 0" in output
-
-
-def test_sync_author_gallery_dl_failure_does_not_import(project_tmp_path):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-    target_dir = project_tmp_path / "staging" / "quinn.xyz"
-    request = type("FakeRequest", (), {"target_dir": target_dir})()
-
-    with (
-        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
-        patch(
-            "ins_eagle_sync.cli.run_gallery_dl",
-            return_value=CompletedProcess(args=["py"], returncode=4, stdout="", stderr="login"),
-        ),
-        patch("ins_eagle_sync.cli.scan_staging_dir") as scan_mock,
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "sync-author",
-                "https://www.instagram.com/quinn.xyz/",
-                "--folder-id",
-                "folder-1",
-            ]
-        )
-
-    assert exit_code == 4
-    scan_mock.assert_not_called()
-    import_mock.assert_not_called()
-
-
-def test_sync_author_success_imports_author_staging_items(project_tmp_path):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-    target_dir = project_tmp_path / "staging" / "quinn.xyz"
-    request = type("FakeRequest", (), {"target_dir": target_dir})()
-    fake_item = object()
-
-    with (
-        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
-        patch(
-            "ins_eagle_sync.cli.run_gallery_dl",
-            return_value=CompletedProcess(args=["py"], returncode=0, stdout="", stderr=""),
-        ) as run_mock,
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[fake_item]) as scan_mock,
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        import_mock.return_value.failed = 0
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "sync-author",
-                "https://www.instagram.com/quinn.xyz/",
-                "--folder-id",
-                "folder-1",
-            ]
-        )
-
-    assert exit_code == 0
-    assert run_mock.call_args.kwargs["dry_run"] is False
-    scan_mock.assert_called_once_with(target_dir, title_caption_chars=70)
-    assert import_mock.call_args.args[0] == [fake_item]
-    assert import_mock.call_args.kwargs["folder_id"] == "folder-1"
-
-
-def test_sync_author_uses_folder_path(project_tmp_path):
-    config_path = project_tmp_path / "config.json"
-    write_test_config(config_path, project_tmp_path)
-    target_dir = project_tmp_path / "staging" / "quinn.xyz"
-    request = type("FakeRequest", (), {"target_dir": target_dir})()
-    fake_item = object()
-
-    class FakeEagle:
-        def __init__(self):
-            self.ensure_calls = []
-
-        def ensure_folder_path(self, folder_path):
-            self.ensure_calls.append(folder_path)
-            return "folder-from-path"
-
-    fake_eagle = FakeEagle()
-    with (
-        patch("ins_eagle_sync.cli.EagleClient", return_value=fake_eagle),
-        patch("ins_eagle_sync.cli.build_gallery_dl_request", return_value=request),
-        patch(
-            "ins_eagle_sync.cli.run_gallery_dl",
-            return_value=CompletedProcess(args=["py"], returncode=0, stdout="", stderr=""),
-        ),
-        patch("ins_eagle_sync.cli.scan_staging_dir", return_value=[fake_item]),
-        patch("ins_eagle_sync.cli.import_staging_items") as import_mock,
-    ):
-        import_mock.return_value.failed = 0
-        exit_code = main(
-            [
-                "--config",
-                str(config_path),
-                "sync-author",
-                "https://www.instagram.com/quinn.xyz/",
-                "--folder-path",
-                "Instagram/quinn.xyz",
-            ]
-        )
-
-    assert exit_code == 0
-    assert fake_eagle.ensure_calls == ["Instagram/quinn.xyz"]
-    assert import_mock.call_args.kwargs["folder_id"] == "folder-from-path"
+    assert service_mock.call_args.args[1] == "https://www.instagram.com/quinn.xyz/"
+    assert service_mock.call_args.kwargs["folder_path"] == "Instagram/quinn.xyz"
+    assert service_mock.call_args.kwargs["dry_run"] is True
+    assert service_mock.call_args.kwargs["force"] is True
+    assert service_mock.call_args.kwargs["verify_eagle"] is True
+    assert service_mock.call_args.kwargs["max_posts"] == 12
+    assert service_mock.call_args.kwargs["show_annotation"] is True
