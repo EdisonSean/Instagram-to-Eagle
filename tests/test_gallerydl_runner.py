@@ -58,6 +58,31 @@ def test_build_post_gallery_dl_request_uses_unknown_shortcode_directory(project_
     assert request.command[-1] == "https://www.instagram.com/p/DYld7hQCT90/"
 
 
+def test_build_gallery_dl_request_can_ignore_archive(project_tmp_path):
+    config = make_config(project_tmp_path)
+
+    request = build_gallery_dl_request(
+        config,
+        "https://www.instagram.com/p/DYld7hQCT90/",
+        ignore_archive=True,
+    )
+
+    assert "--download-archive" not in request.command
+    assert str(config.archive_db) not in request.command
+
+
+def test_build_gallery_dl_request_can_enable_verbose(project_tmp_path):
+    config = make_config(project_tmp_path)
+
+    request = build_gallery_dl_request(
+        config,
+        "https://www.instagram.com/p/DYld7hQCT90/",
+        verbose=True,
+    )
+
+    assert "--verbose" in request.command
+
+
 def test_dry_run_logs_command_without_calling_subprocess(project_tmp_path):
     config = make_config(project_tmp_path)
     logs = []

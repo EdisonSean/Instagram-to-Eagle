@@ -23,7 +23,13 @@ class GalleryDlRequest:
     command: list[str]
 
 
-def build_gallery_dl_request(config: AppConfig, url: str) -> GalleryDlRequest:
+def build_gallery_dl_request(
+    config: AppConfig,
+    url: str,
+    *,
+    ignore_archive: bool = False,
+    verbose: bool = False,
+) -> GalleryDlRequest:
     info = detect_instagram_url(url)
     target_dir = build_target_dir(config, url)
     return GalleryDlRequest(
@@ -31,7 +37,13 @@ def build_gallery_dl_request(config: AppConfig, url: str) -> GalleryDlRequest:
         url=info.normalized_url,
         target_dir=target_dir,
         archive_db=config.archive_db,
-        command=build_gallery_dl_command(config, info.normalized_url, target_dir),
+        command=build_gallery_dl_command(
+            config,
+            info.normalized_url,
+            target_dir,
+            ignore_archive=ignore_archive,
+            verbose=verbose,
+        ),
     )
 
 
@@ -49,15 +61,24 @@ def build_target_dir(config: AppConfig, url: str) -> Path:
     raise ValueError(f"Unsupported gallery-dl mode: {info.mode.value}")
 
 
-def build_gallery_dl_command(config: AppConfig, url: str, target_dir: Path) -> list[str]:
+def build_gallery_dl_command(
+    config: AppConfig,
+    url: str,
+    target_dir: Path,
+    *,
+    ignore_archive: bool = False,
+    verbose: bool = False,
+) -> list[str]:
     command = shlex.split(config.gallery_dl_executable)
     command.append("--config-ignore")
+    if verbose:
+        command.append("--verbose")
     command.extend(build_cookie_args(config))
+    command.append("--write-metadata")
+    if not ignore_archive:
+        command.extend(["--download-archive", str(config.archive_db)])
     command.extend(
         [
-            "--write-metadata",
-            "--download-archive",
-            str(config.archive_db),
             "--sleep-request",
             config.download.sleep_request,
             "--range",
@@ -88,9 +109,16 @@ def run_gallery_dl(
     url: str,
     *,
     dry_run: bool = False,
+    ignore_archive: bool = False,
+    verbose: bool = False,
     log: LogFn = print,
 ) -> subprocess.CompletedProcess[str] | None:
-    request = build_gallery_dl_request(config, url)
+    request = build_gallery_dl_request(
+        config,
+        url,
+        ignore_archive=ignore_archive,
+        verbose=verbose,
+    )
     log_gallery_dl_request(request, dry_run=dry_run, log=log)
 
     missing_cookie_result = validate_cookie_file(config, request, dry_run=dry_run, log=log)

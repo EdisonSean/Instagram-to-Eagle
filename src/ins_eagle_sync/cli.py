@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .config import load_config
 from .eagle_client import EagleClient
-from .gallerydl_runner import run_gallery_dl
+from .gallerydl_runner import build_gallery_dl_request, run_gallery_dl
 from .importer import import_staging_items
 from .metadata_parser import scan_staging_dir
 from .state_store import ImportedState
@@ -40,6 +40,15 @@ def build_parser() -> argparse.ArgumentParser:
     import_staging_parser.add_argument("--dry-run", action="store_true")
     import_staging_parser.add_argument("--force", action="store_true")
     import_staging_parser.add_argument("--show-annotation", action="store_true")
+
+    sync_post_parser = subparsers.add_parser("sync-post", help="Download and import a single Instagram post.")
+    sync_post_parser.add_argument("post_url")
+    sync_post_parser.add_argument("--folder-id", required=True)
+    sync_post_parser.add_argument("--dry-run", action="store_true")
+    sync_post_parser.add_argument("--force", action="store_true")
+    sync_post_parser.add_argument("--show-annotation", action="store_true")
+    sync_post_parser.add_argument("--ignore-archive", action="store_true")
+    sync_post_parser.add_argument("--verbose-gallery-dl", action="store_true")
 
     forget_import_parser = subparsers.add_parser("forget-import", help="Remove records from imported state.")
     forget_import_parser.add_argument("--unique-key")
@@ -141,6 +150,43 @@ def main(argv: list[str] | None = None) -> int:
         if result.matched_count == 0:
             safe_print("No imported records matched the given selector.")
         return 0
+
+    if args.command == "sync-post":
+        info = detect_instagram_url(args.post_url)
+        if info.mode.value != "post":
+            raise SystemExit("sync-post requires a post or reel URL.")
+
+        request = build_gallery_dl_request(
+            config,
+            info.normalized_url,
+            ignore_archive=args.ignore_archive,
+            verbose=args.verbose_gallery_dl,
+        )
+        download_result = run_gallery_dl(
+            config,
+            info.normalized_url,
+            dry_run=args.dry_run,
+            ignore_archive=args.ignore_archive,
+            verbose=args.verbose_gallery_dl,
+            log=safe_print,
+        )
+        if download_result is not None and download_result.returncode != 0:
+            return download_result.returncode
+
+        items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
+        state = ImportedState.load(config.imported_state)
+        eagle = EagleClient(config.eagle_api_base)
+        import_result = import_staging_items(
+            items,
+            eagle=eagle,
+            state=state,
+            folder_id=args.folder_id,
+            dry_run=args.dry_run,
+            force=args.force,
+            show_annotation=args.show_annotation,
+            log=safe_print,
+        )
+        return 1 if import_result.failed else 0
 
     info = detect_instagram_url(args.url)
 
