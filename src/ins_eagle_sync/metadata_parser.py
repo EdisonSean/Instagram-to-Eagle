@@ -62,7 +62,18 @@ def scan_staging_dir(staging_dir: str | Path) -> list[ImportItem]:
                 default_media_index=default_index,
             )
         )
-    return items
+    return sort_import_items(items)
+
+
+def sort_import_items(items: list[ImportItem]) -> list[ImportItem]:
+    return sorted(
+        items,
+        key=lambda item: (
+            item.shortcode,
+            item.media_index,
+            str(item.file_path).lower(),
+        ),
+    )
 
 
 def find_metadata_json(file_path: str | Path) -> Path | None:

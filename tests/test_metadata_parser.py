@@ -90,6 +90,36 @@ def test_scan_staging_dir_finds_media_and_matching_metadata(project_tmp_path):
     assert items[0].media_index == 2
 
 
+def test_scan_staging_dir_sorts_by_shortcode_and_media_index(project_tmp_path):
+    media_specs = [
+        ("z_video.mp4", "ORDER1", 1),
+        ("a_image.jpg", "ORDER1", 2),
+        ("m_image.jpg", "ORDER1", 3),
+    ]
+    target_dir = project_tmp_path / "unknown" / "ORDER1"
+    target_dir.mkdir(parents=True)
+
+    for filename, shortcode, media_index in media_specs:
+        media_path = target_dir / filename
+        media_path.write_bytes(b"fake media")
+        metadata = {
+            "username": "author",
+            "post_shortcode": shortcode,
+            "description": f"caption {media_index}",
+            "num": media_index,
+        }
+        Path(str(media_path) + ".json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    items = scan_staging_dir(project_tmp_path)
+
+    assert [item.media_index for item in items] == [1, 2, 3]
+    assert [item.unique_key for item in items] == [
+        "instagram:author:ORDER1:01",
+        "instagram:author:ORDER1:02",
+        "instagram:author:ORDER1:03",
+    ]
+
+
 def test_scan_staging_dir_uses_path_fallbacks_without_metadata(project_tmp_path):
     media_path = project_tmp_path / "unknown" / "FALLBACK1" / "photo_03.mp4"
     media_path.parent.mkdir(parents=True)

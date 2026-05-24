@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from .config import load_config
+from .eagle_client import EagleClient
 from .gallerydl_runner import run_gallery_dl
+from .importer import import_staging_items
 from .metadata_parser import scan_staging_dir
+from .state_store import ImportedState
 from .utils import detect_instagram_url
 
 
@@ -30,6 +34,13 @@ def build_parser() -> argparse.ArgumentParser:
     parse_staging_parser = subparsers.add_parser("parse-staging", help="Parse staged media and metadata.")
     parse_staging_parser.add_argument("staging_dir")
 
+    import_staging_parser = subparsers.add_parser("import-staging", help="Import staged media into Eagle.")
+    import_staging_parser.add_argument("staging_dir")
+    import_staging_parser.add_argument("--folder-id", required=True)
+    import_staging_parser.add_argument("--dry-run", action="store_true")
+    import_staging_parser.add_argument("--force", action="store_true")
+    import_staging_parser.add_argument("--show-annotation", action="store_true")
+
     sync_parser = subparsers.add_parser("sync", help="Author sync mode placeholder.")
     sync_parser.add_argument("url")
 
@@ -45,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "detect":
         info = detect_instagram_url(args.url)
-        print(
+        safe_print(
             json.dumps(
                 {
                     "mode": info.mode.value,
@@ -62,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "parse-staging":
         items = scan_staging_dir(Path(args.staging_dir))
-        print(
+        safe_print(
             json.dumps(
                 [
                     {
@@ -81,26 +92,43 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     config = load_config(resolve_config_path(args.config))
+
+    if args.command == "import-staging":
+        items = scan_staging_dir(Path(args.staging_dir))
+        state = ImportedState.load(config.imported_state)
+        eagle = EagleClient(config.eagle_api_base)
+        result = import_staging_items(
+            items,
+            eagle=eagle,
+            state=state,
+            folder_id=args.folder_id,
+            dry_run=args.dry_run,
+            force=args.force,
+            show_annotation=args.show_annotation,
+            log=safe_print,
+        )
+        return 1 if result.failed else 0
+
     info = detect_instagram_url(args.url)
 
     if args.command == "run":
-        result = run_gallery_dl(config, info.normalized_url, dry_run=args.dry_run)
+        result = run_gallery_dl(config, info.normalized_url, dry_run=args.dry_run, log=safe_print)
         return 0 if result is None else result.returncode
 
     if args.command == "sync":
         if info.mode.value != "author":
             raise SystemExit("sync requires an author URL, e.g. https://www.instagram.com/username/")
-        print(f"Detected author sync URL: {info.normalized_url}")
-        print(f"Staging directory: {config.staging_dir}")
-        print("Download/import workflow will be implemented in the next step.")
+        safe_print(f"Detected author sync URL: {info.normalized_url}")
+        safe_print(f"Staging directory: {config.staging_dir}")
+        safe_print("Download/import workflow will be implemented in the next step.")
         return 0
 
     if args.command == "import":
         if info.mode.value not in {"post", "reel"}:
             raise SystemExit("import requires a post or reel URL.")
-        print(f"Detected single post URL: {info.normalized_url}")
-        print(f"Target Eagle folder ID: {args.folder_id}")
-        print("Download/import workflow will be implemented in the next step.")
+        safe_print(f"Detected single post URL: {info.normalized_url}")
+        safe_print(f"Target Eagle folder ID: {args.folder_id}")
+        safe_print("Download/import workflow will be implemented in the next step.")
         return 0
 
     raise SystemExit(f"Unknown command: {args.command}")
@@ -117,6 +145,13 @@ def resolve_config_path(config_path: str) -> Path:
             return example_path
 
     return path
+
+
+def safe_print(message: object = "") -> None:
+    text = str(message)
+    encoding = sys.stdout.encoding or "utf-8"
+    safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+    sys.stdout.write(safe_text + "\n")
 
 
 if __name__ == "__main__":

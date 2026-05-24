@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 def import_key(shortcode: str, media_index: int) -> str:
@@ -12,7 +14,7 @@ def import_key(shortcode: str, media_index: int) -> str:
 @dataclass
 class ImportedState:
     path: Path
-    imported: set[str] = field(default_factory=set)
+    records: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str | Path) -> "ImportedState":
@@ -21,19 +23,83 @@ class ImportedState:
             return cls(path=state_path)
 
         data = json.loads(state_path.read_text(encoding="utf-8"))
-        imported = data.get("imported", [])
-        return cls(path=state_path, imported=set(map(str, imported)))
+        return cls(path=state_path, records=_parse_state_data(data))
+
+    @property
+    def imported(self) -> set[str]:
+        return set(self.records)
+
+    def has_unique_key(self, unique_key: str) -> bool:
+        return unique_key in self.records
+
+    def mark_item_imported(
+        self,
+        import_item: Any,
+        *,
+        eagle_item_id: str | None = None,
+        imported_at: str | None = None,
+    ) -> None:
+        self.records[import_item.unique_key] = {
+            "file_path": str(import_item.file_path),
+            "website": import_item.website,
+            "title": import_item.title,
+            "eagle_item_id": eagle_item_id or "",
+            "imported_at": imported_at or _utc_now(),
+        }
 
     def has_imported(self, shortcode: str, media_index: int) -> bool:
-        return import_key(shortcode, media_index) in self.imported
+        return import_key(shortcode, media_index) in self.records
 
     def mark_imported(self, shortcode: str, media_index: int) -> None:
-        self.imported.add(import_key(shortcode, media_index))
+        key = import_key(shortcode, media_index)
+        self.records[key] = {
+            "file_path": "",
+            "website": "",
+            "title": "",
+            "eagle_item_id": "",
+            "imported_at": _utc_now(),
+        }
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"imported": sorted(self.imported)}
+        data = {key: self.records[key] for key in sorted(self.records)}
         self.path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+
+
+def _parse_state_data(data: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(data, dict):
+        return {}
+
+    legacy_imported = data.get("imported")
+    if isinstance(legacy_imported, list):
+        return {
+            str(key): {
+                "file_path": "",
+                "website": "",
+                "title": "",
+                "eagle_item_id": "",
+                "imported_at": "",
+            }
+            for key in legacy_imported
+        }
+
+    records: dict[str, dict[str, Any]] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            records[str(key)] = value
+        else:
+            records[str(key)] = {
+                "file_path": "",
+                "website": "",
+                "title": "",
+                "eagle_item_id": str(value),
+                "imported_at": "",
+            }
+    return records
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
