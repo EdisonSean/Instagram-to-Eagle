@@ -219,7 +219,7 @@ def test_existing_unique_key_without_id_recovers_id_and_skips(project_tmp_path):
     assert loaded.records[item.unique_key]["eagle_item_id"] == "recovered-id"
 
 
-def test_existing_unique_key_without_id_reimports_when_no_matching_eagle_item(project_tmp_path):
+def test_existing_unique_key_without_id_skips_when_no_strict_eagle_match(project_tmp_path):
     item = make_item(project_tmp_path)
     state_path = project_tmp_path / "state.json"
     state = ImportedState.load(state_path)
@@ -236,12 +236,12 @@ def test_existing_unique_key_without_id_reimports_when_no_matching_eagle_item(pr
         log=lambda _line: None,
     )
 
-    assert result.skipped == 0
-    assert result.imported == 1
+    assert result.skipped == 1
+    assert result.imported == 0
     assert eagle.find_calls == [(item, "folder-1")]
-    assert len(eagle.add_calls) == 1
+    assert eagle.add_calls == []
     loaded = ImportedState.load(state_path)
-    assert loaded.records[item.unique_key]["eagle_item_id"] == "replacement"
+    assert loaded.records[item.unique_key]["eagle_item_id"] == ""
 
 
 def test_existing_unique_key_without_id_unknown_search_is_skipped(project_tmp_path):
@@ -267,6 +267,31 @@ def test_existing_unique_key_without_id_unknown_search_is_skipped(project_tmp_pa
     assert eagle.add_calls == []
     loaded = ImportedState.load(state_path)
     assert loaded.records[item.unique_key]["eagle_item_id"] == ""
+
+
+def test_existing_unique_key_without_id_multiple_matches_is_skipped(project_tmp_path):
+    item = make_item(project_tmp_path)
+    state_path = project_tmp_path / "state.json"
+    state = ImportedState.load(state_path)
+    state.mark_item_imported(item, eagle_item_id="")
+    state.save()
+    eagle = FakeEagle(find_error=EagleApiError("multiple Eagle items matched, manual cleanup required"))
+    logs = []
+
+    result = import_staging_items(
+        [item],
+        eagle=eagle,
+        state=state,
+        folder_id="folder-1",
+        verify_eagle=True,
+        log=logs.append,
+    )
+
+    assert result.skipped == 1
+    assert result.imported == 0
+    assert eagle.add_calls == []
+    assert ImportedState.load(state_path).records[item.unique_key]["eagle_item_id"] == ""
+    assert any("multiple Eagle items matched, manual cleanup required" in line for line in logs)
 
 
 def test_force_does_not_skip_existing_unique_key(project_tmp_path):
@@ -488,5 +513,30 @@ def test_import_staging_verify_eagle_reimports_file_does_not_exist(project_tmp_p
 
     assert result.skipped == 0
     assert result.imported == 1
+    loaded = ImportedState.load(state_path)
+    assert loaded.records[item.unique_key]["eagle_item_id"] == "replacement"
+
+
+def test_import_staging_does_not_fallback_to_relink_when_existing_id_is_missing(project_tmp_path):
+    item = make_item(project_tmp_path)
+    state_path = project_tmp_path / "state.json"
+    state = ImportedState.load(state_path)
+    state.mark_item_imported(item, eagle_item_id="deleted-id")
+    state.save()
+    eagle = FakeEagle(response={"status": "success", "data": {"id": "replacement"}}, matching_item_id="wrong-id")
+
+    result = import_staging_items(
+        [item],
+        eagle=eagle,
+        state=state,
+        folder_id="folder-1",
+        verify_eagle=True,
+        log=lambda _line: None,
+    )
+
+    assert result.skipped == 0
+    assert result.imported == 1
+    assert eagle.item_exists_calls == ["deleted-id"]
+    assert eagle.find_calls == []
     loaded = ImportedState.load(state_path)
     assert loaded.records[item.unique_key]["eagle_item_id"] == "replacement"

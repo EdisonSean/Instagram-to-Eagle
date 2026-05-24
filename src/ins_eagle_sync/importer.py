@@ -84,9 +84,11 @@ def import_staging_items(
                     log(f"skip existing Eagle item after recovering id: {item.unique_key}")
                     continue
 
-                state.remove_keys([item.unique_key], save=True)
-                log(f"removed stale imported_state record with no matching Eagle item: {item.unique_key}")
-                pending_items.append(item)
+                result.skipped += 1
+                log(
+                    f"warning: imported_state has no eagle_item_id and no strict Eagle match for "
+                    f"{item.unique_key}; skip to avoid duplicate import."
+                )
                 continue
 
             try:

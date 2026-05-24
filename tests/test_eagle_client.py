@@ -19,6 +19,21 @@ def make_response(status_code=200, payload=None, text=""):
     return response
 
 
+def make_import_item(project_tmp_path, *, index=1, annotation=None):
+    shortcode = "ABC123"
+    return ImportItem(
+        file_path=project_tmp_path / f"image_{index:02d}.jpg",
+        title="Same Title",
+        website=f"https://www.instagram.com/p/{shortcode}/",
+        annotation=annotation or f"Shortcode: {shortcode}\n序号: {index:02d}",
+        tags=["instagram"],
+        unique_key=f"instagram:user:{shortcode}:{index:02d}",
+        username="user",
+        shortcode=shortcode,
+        media_index=index,
+    )
+
+
 def test_check_app_available_uses_application_info_endpoint():
     with patch("ins_eagle_sync.eagle_client.requests.get", return_value=make_response()) as get_mock:
         client = EagleClient("http://localhost:41595")
@@ -98,6 +113,81 @@ def test_add_item_from_path_recovers_id_from_item_list_when_response_has_no_id(p
         params={"limit": 200, "offset": 0, "orderBy": "-CREATEDATE", "folders": "folder-1"},
         timeout=10,
     )
+
+
+def test_find_matching_item_id_requires_media_index_in_annotation(project_tmp_path):
+    item = make_import_item(project_tmp_path, index=1)
+    list_response = make_response(
+        payload={
+            "status": "success",
+            "data": [
+                {
+                    "id": "item-2",
+                    "name": item.title,
+                    "url": item.website,
+                    "annotation": "Shortcode: ABC123\n序号: 02",
+                    "folderId": "folder-1",
+                    "isDeleted": False,
+                }
+            ],
+        }
+    )
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", return_value=list_response):
+        assert EagleClient("http://localhost:41595").find_matching_item_id(item, "folder-1") == ""
+
+
+def test_find_matching_item_id_does_not_match_title_and_website_without_strict_annotation(project_tmp_path):
+    item = make_import_item(project_tmp_path, index=1)
+    list_response = make_response(
+        payload={
+            "status": "success",
+            "data": [
+                {
+                    "id": "item-1",
+                    "name": item.title,
+                    "url": item.website,
+                    "annotation": "same caption only",
+                    "folderId": "folder-1",
+                    "isDeleted": False,
+                }
+            ],
+        }
+    )
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", return_value=list_response):
+        assert EagleClient("http://localhost:41595").find_matching_item_id(item, "folder-1") == ""
+
+
+def test_find_matching_item_id_raises_when_multiple_candidates_match(project_tmp_path):
+    item = make_import_item(project_tmp_path, index=1)
+    list_response = make_response(
+        payload={
+            "status": "success",
+            "data": [
+                {
+                    "id": "item-1",
+                    "name": "Any title",
+                    "url": item.website,
+                    "annotation": "Shortcode: ABC123\nMedia Index: 01",
+                    "folders": ["folder-1"],
+                    "isDeleted": False,
+                },
+                {
+                    "id": "item-dup",
+                    "name": "Another title",
+                    "url": item.website,
+                    "annotation": "Shortcode: ABC123\n序号: 01",
+                    "folders": ["folder-1"],
+                    "isDeleted": False,
+                },
+            ],
+        }
+    )
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", return_value=list_response):
+        with pytest.raises(EagleApiError, match="multiple Eagle items matched"):
+            EagleClient("http://localhost:41595").find_matching_item_id(item, "folder-1")
 
 
 def test_add_item_from_path_raises_clear_error_for_failed_response():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -106,21 +107,24 @@ class EagleClient:
     ) -> str:
         offset = 0
         checked = 0
+        matches: list[str] = []
         while checked < max_items:
             page = self.list_items(limit=limit, offset=offset, folder_id=folder_id)
             if not page:
-                return ""
+                break
 
             for item in page:
                 checked += 1
                 if _item_matches_import_item(item, import_item, folder_id):
-                    return str(item.get("id") or "")
+                    matches.append(str(item.get("id") or ""))
+                    if len(matches) > 1:
+                        raise EagleApiError("multiple Eagle items matched, manual cleanup required")
 
             if len(page) < limit:
-                return ""
+                break
             offset += limit
 
-        return ""
+        return matches[0] if matches else ""
 
 
 def _build_add_item_payload(
@@ -265,21 +269,60 @@ def _item_matches_import_item(item: dict[str, Any], import_item: Any, folder_id:
     if item.get("isDeleted") is True:
         return False
 
-    if folder_id:
-        folders = item.get("folders")
-        if not isinstance(folders, list) or folder_id not in {str(folder) for folder in folders}:
-            return False
+    if folder_id and not _item_is_in_folder(item, folder_id):
+        return False
 
     item_url = str(item.get("url") or item.get("website") or "")
     if item_url != str(import_item.website):
         return False
 
-    if str(item.get("name") or "") != str(import_item.title):
+    annotation = _normalize_multiline_text(str(item.get("annotation") or ""))
+    if not _annotation_has_shortcode(annotation, str(import_item.shortcode)):
         return False
 
-    item_annotation = _normalize_multiline_text(str(item.get("annotation") or ""))
-    import_annotation = _normalize_multiline_text(str(import_item.annotation))
-    return item_annotation == import_annotation
+    return _annotation_has_media_index(annotation, int(import_item.media_index))
+
+
+def _item_is_in_folder(item: dict[str, Any], folder_id: str) -> bool:
+    folder_values: set[str] = set()
+    for key in ("folderId", "folder_id"):
+        value = item.get(key)
+        if value:
+            folder_values.add(str(value))
+
+    folders = item.get("folders")
+    if isinstance(folders, list):
+        for folder in folders:
+            if isinstance(folder, dict):
+                for key in ("id", "folderId", "folder_id"):
+                    value = folder.get(key)
+                    if value:
+                        folder_values.add(str(value))
+            elif folder:
+                folder_values.add(str(folder))
+
+    return folder_id in folder_values
+
+
+def _annotation_has_shortcode(annotation: str, shortcode: str) -> bool:
+    return _annotation_has_labeled_value(annotation, ["Shortcode"], shortcode)
+
+
+def _annotation_has_media_index(annotation: str, media_index: int) -> bool:
+    index = f"{media_index:02d}"
+    return _annotation_has_labeled_value(
+        annotation,
+        ["序号", "Index", "Media Index", "搴忓彿"],
+        index,
+    )
+
+
+def _annotation_has_labeled_value(annotation: str, labels: list[str], value: str) -> bool:
+    for label in labels:
+        pattern = rf"{re.escape(label)}\s*[:：]\s*{re.escape(value)}(?=$|[^\w-])"
+        if re.search(pattern, annotation, flags=re.IGNORECASE):
+            return True
+    return False
 
 
 def _normalize_multiline_text(value: str) -> str:
