@@ -79,16 +79,13 @@ class ImportedState:
         if unique_key:
             return [unique_key] if unique_key in self.records else []
 
-        if not shortcode:
-            return []
-
         matches: list[str] = []
         for key in self.records:
             parsed = parse_instagram_unique_key(key)
             if parsed is None:
                 continue
             key_username, key_shortcode, _media_index = parsed
-            if key_shortcode != shortcode:
+            if shortcode and key_shortcode != shortcode:
                 continue
             if username and key_username != username:
                 continue
@@ -121,6 +118,21 @@ class ImportedState:
             removed_keys=matched_keys,
             backup_path=backup_path,
         )
+
+    def remove_keys(self, keys: list[str], *, save: bool = True, backup: bool = False) -> list[str]:
+        removed: list[str] = []
+        if not keys:
+            return removed
+
+        if backup:
+            self.backup()
+        for key in keys:
+            if key in self.records:
+                self.records.pop(key)
+                removed.append(key)
+        if removed and save:
+            self.save()
+        return removed
 
     def backup(self) -> Path | None:
         if not self.path.exists():

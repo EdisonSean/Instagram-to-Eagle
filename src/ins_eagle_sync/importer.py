@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Callable
 
-from .eagle_client import EagleApiError, EagleClient
+from .eagle_client import EagleApiError, EagleClient, extract_eagle_item_id
 from .metadata_parser import ImportItem
 from .state_store import ImportedState
 
@@ -27,6 +27,16 @@ class ImportResult:
     failures: list[ImportFailure] = field(default_factory=list)
 
 
+@dataclass
+class VerifyImportsResult:
+    checked: int = 0
+    alive: int = 0
+    missing: int = 0
+    unknown: int = 0
+    removed: int = 0
+    missing_keys: list[str] = field(default_factory=list)
+
+
 def import_staging_items(
     items: list[ImportItem],
     *,
@@ -35,6 +45,7 @@ def import_staging_items(
     folder_id: str,
     dry_run: bool = False,
     force: bool = False,
+    verify_eagle: bool = False,
     show_annotation: bool = False,
     log: LogFn = print,
 ) -> ImportResult:
@@ -49,9 +60,60 @@ def import_staging_items(
     pending_items: list[ImportItem] = []
     for item in items:
         if state.has_unique_key(item.unique_key) and not force:
-            result.skipped += 1
-            log(f"skip already imported: {item.unique_key}")
-            continue
+            if not verify_eagle:
+                result.skipped += 1
+                log(f"skip already imported: {item.unique_key}")
+                continue
+
+            eagle_item_id = str(state.records.get(item.unique_key, {}).get("eagle_item_id") or "")
+            if not eagle_item_id:
+                try:
+                    eagle_item_id = eagle.find_matching_item_id(item, folder_id)
+                except EagleApiError as exc:
+                    result.skipped += 1
+                    log(
+                        f"warning: could not recover Eagle item id for {item.unique_key}: "
+                        f"{exc}; skip to avoid duplicate import."
+                    )
+                    continue
+
+                if eagle_item_id:
+                    state.records[item.unique_key]["eagle_item_id"] = eagle_item_id
+                    state.save()
+                    result.skipped += 1
+                    log(f"skip existing Eagle item after recovering id: {item.unique_key}")
+                    continue
+
+                state.remove_keys([item.unique_key], save=True)
+                log(f"removed stale imported_state record with no matching Eagle item: {item.unique_key}")
+                pending_items.append(item)
+                continue
+
+            try:
+                exists = eagle.item_exists(eagle_item_id)
+            except EagleApiError as exc:
+                result.skipped += 1
+                log(
+                    f"warning: could not verify Eagle item {eagle_item_id} for {item.unique_key}: "
+                    f"{exc}; skip to avoid duplicate import."
+                )
+                continue
+
+            if exists is True:
+                result.skipped += 1
+                log(f"skip existing Eagle item: {item.unique_key}")
+                continue
+
+            if exists is not False:
+                result.skipped += 1
+                log(
+                    f"warning: Eagle item status is unknown for {item.unique_key} "
+                    f"({eagle_item_id}); skip to avoid duplicate import."
+                )
+                continue
+
+            state.remove_keys([item.unique_key], save=True)
+            log(f"removed stale imported_state record: {item.unique_key}")
         pending_items.append(item)
 
     if not pending_items:
@@ -72,6 +134,11 @@ def import_staging_items(
         try:
             response = eagle.add_item_from_path(item, folder_id)
             eagle_item_id = extract_eagle_item_id(response)
+            if not eagle_item_id:
+                log(
+                    f"warning: Eagle API response did not include an item id for {item.unique_key}; "
+                    "future --verify-eagle runs will skip this state record."
+                )
             state.mark_item_imported(item, eagle_item_id=eagle_item_id)
             state.save()
             result.imported += 1
@@ -86,18 +153,61 @@ def import_staging_items(
     return result
 
 
-def extract_eagle_item_id(response: dict[str, Any]) -> str:
-    data = response.get("data") if isinstance(response, dict) else None
-    if isinstance(data, dict):
-        for key in ("id", "itemId", "item_id"):
-            if data.get(key):
-                return str(data[key])
+def verify_import_records(
+    *,
+    eagle: EagleClient,
+    state: ImportedState,
+    unique_key: str | None = None,
+    shortcode: str | None = None,
+    username: str | None = None,
+    dry_run: bool = False,
+    log: LogFn = print,
+) -> VerifyImportsResult:
+    keys = state.find_keys(unique_key=unique_key, shortcode=shortcode, username=username)
+    result = VerifyImportsResult(checked=len(keys))
 
-    for key in ("id", "itemId", "item_id"):
-        if response.get(key):
-            return str(response[key])
+    for key in keys:
+        record = state.records.get(key, {})
+        eagle_item_id = str(record.get("eagle_item_id") or "")
+        if not eagle_item_id:
+            result.unknown += 1
+            log(f"warning: imported_state has no eagle_item_id: {key}")
+            continue
 
-    return ""
+        try:
+            exists = eagle.item_exists(eagle_item_id)
+        except EagleApiError as exc:
+            result.unknown += 1
+            log(f"warning: could not verify Eagle item {eagle_item_id} for {key}: {exc}")
+            continue
+
+        if exists is True:
+            result.alive += 1
+            log(f"alive: {key}")
+            continue
+
+        if exists is not False:
+            result.unknown += 1
+            log(f"warning: Eagle item status is unknown for {key}: {eagle_item_id}")
+            continue
+
+        result.missing += 1
+        result.missing_keys.append(key)
+        action = "would remove" if dry_run else "missing"
+        log(f"{action}: {key}")
+
+    if not dry_run and result.missing_keys:
+        removed_keys = state.remove_keys(result.missing_keys, save=True)
+        result.removed = len(removed_keys)
+    elif dry_run:
+        result.removed = 0
+
+    log(f"checked: {result.checked}")
+    log(f"alive: {result.alive}")
+    log(f"missing: {result.missing}")
+    log(f"unknown: {result.unknown}")
+    log(f"removed: {result.removed}")
+    return result
 
 
 def _log_dry_run_plan(

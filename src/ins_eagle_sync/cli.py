@@ -8,7 +8,7 @@ from pathlib import Path
 from .config import load_config
 from .eagle_client import EagleClient
 from .gallerydl_runner import build_gallery_dl_request, run_gallery_dl
-from .importer import import_staging_items
+from .importer import import_staging_items, verify_import_records
 from .metadata_parser import scan_staging_dir
 from .state_store import ImportedState
 from .utils import detect_instagram_url
@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_staging_parser.add_argument("--folder-id", required=True)
     import_staging_parser.add_argument("--dry-run", action="store_true")
     import_staging_parser.add_argument("--force", action="store_true")
+    import_staging_parser.add_argument("--verify-eagle", action="store_true")
     import_staging_parser.add_argument("--show-annotation", action="store_true")
 
     sync_post_parser = subparsers.add_parser("sync-post", help="Download and import a single Instagram post.")
@@ -46,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_post_parser.add_argument("--folder-id", required=True)
     sync_post_parser.add_argument("--dry-run", action="store_true")
     sync_post_parser.add_argument("--force", action="store_true")
+    sync_post_parser.add_argument("--verify-eagle", action="store_true")
     sync_post_parser.add_argument("--show-annotation", action="store_true")
     sync_post_parser.add_argument("--ignore-archive", action="store_true")
     sync_post_parser.add_argument("--verbose-gallery-dl", action="store_true")
@@ -55,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync_author_parser.add_argument("--folder-id", required=True)
     sync_author_parser.add_argument("--dry-run", action="store_true")
     sync_author_parser.add_argument("--force", action="store_true")
+    sync_author_parser.add_argument("--verify-eagle", action="store_true")
     sync_author_parser.add_argument("--max-posts", type=int)
     sync_author_parser.add_argument("--show-annotation", action="store_true")
     sync_author_parser.add_argument("--ignore-archive", action="store_true")
@@ -65,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
     forget_import_parser.add_argument("--username")
     forget_import_parser.add_argument("--shortcode")
     forget_import_parser.add_argument("--dry-run", action="store_true")
+
+    verify_imports_parser = subparsers.add_parser("verify-imports", help="Verify imported Eagle items still exist.")
+    verify_imports_parser.add_argument("--unique-key")
+    verify_imports_parser.add_argument("--username")
+    verify_imports_parser.add_argument("--shortcode")
+    verify_imports_parser.add_argument("--dry-run", action="store_true")
 
     sync_parser = subparsers.add_parser("sync", help="Author sync mode placeholder.")
     sync_parser.add_argument("url")
@@ -130,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             folder_id=args.folder_id,
             dry_run=args.dry_run,
             force=args.force,
+            verify_eagle=args.verify_eagle,
             show_annotation=args.show_annotation,
             log=safe_print,
         )
@@ -159,6 +169,22 @@ def main(argv: list[str] | None = None) -> int:
             safe_print(f"backup: {result.backup_path}")
         if result.matched_count == 0:
             safe_print("No imported records matched the given selector.")
+        return 0
+
+    if args.command == "verify-imports":
+        if args.unique_key and (args.shortcode or args.username):
+            raise SystemExit("verify-imports --unique-key cannot be combined with --username or --shortcode")
+        state = ImportedState.load(config.imported_state)
+        eagle = EagleClient(config.eagle_api_base)
+        verify_import_records(
+            eagle=eagle,
+            state=state,
+            unique_key=args.unique_key,
+            shortcode=args.shortcode,
+            username=args.username,
+            dry_run=args.dry_run,
+            log=safe_print,
+        )
         return 0
 
     if args.command == "sync-post":
@@ -193,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             folder_id=args.folder_id,
             dry_run=args.dry_run,
             force=args.force,
+            verify_eagle=args.verify_eagle,
             show_annotation=args.show_annotation,
             log=safe_print,
         )
@@ -232,6 +259,7 @@ def main(argv: list[str] | None = None) -> int:
             folder_id=args.folder_id,
             dry_run=args.dry_run,
             force=args.force,
+            verify_eagle=args.verify_eagle,
             show_annotation=args.show_annotation,
             log=safe_print,
         )
