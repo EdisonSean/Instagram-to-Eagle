@@ -96,3 +96,54 @@ def test_import_staging_dry_run_uses_state_and_importer(project_tmp_path):
     scan_mock.assert_called_once_with(project_tmp_path / "staging", title_caption_chars=70)
     assert import_mock.call_args.kwargs["folder_id"] == "folder-1"
     assert import_mock.call_args.kwargs["dry_run"] is True
+
+
+def test_forget_import_cli_dry_run_does_not_modify_state(project_tmp_path, capsys):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    state_path = project_tmp_path / "imported.json"
+    original_records = {
+        "instagram:quinn.xyz:DYld7hQCT90:01": {"title": "one"},
+        "instagram:quinn.xyz:DYld7hQCT90:02": {"title": "two"},
+    }
+    state_path.write_text(json.dumps(original_records, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "forget-import",
+            "--shortcode",
+            "DYld7hQCT90",
+            "--dry-run",
+        ]
+    )
+
+    assert exit_code == 0
+    assert json.loads(state_path.read_text(encoding="utf-8")) == original_records
+    output = capsys.readouterr().out
+    assert "matched count: 2" in output
+    assert "removed count: 0" in output
+    assert "instagram:quinn.xyz:DYld7hQCT90:01" in output
+
+
+def test_forget_import_cli_missing_record_outputs_clear_message(project_tmp_path, capsys):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+    state_path = project_tmp_path / "imported.json"
+    state_path.write_text("{}", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "forget-import",
+            "--unique-key",
+            "instagram:quinn.xyz:MISSING:01",
+        ]
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "matched count: 0" in output
+    assert "No imported records matched" in output

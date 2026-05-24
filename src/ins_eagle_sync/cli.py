@@ -41,6 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     import_staging_parser.add_argument("--force", action="store_true")
     import_staging_parser.add_argument("--show-annotation", action="store_true")
 
+    forget_import_parser = subparsers.add_parser("forget-import", help="Remove records from imported state.")
+    forget_import_parser.add_argument("--unique-key")
+    forget_import_parser.add_argument("--username")
+    forget_import_parser.add_argument("--shortcode")
+    forget_import_parser.add_argument("--dry-run", action="store_true")
+
     sync_parser = subparsers.add_parser("sync", help="Author sync mode placeholder.")
     sync_parser.add_argument("url")
 
@@ -109,6 +115,32 @@ def main(argv: list[str] | None = None) -> int:
             log=safe_print,
         )
         return 1 if result.failed else 0
+
+    if args.command == "forget-import":
+        if not args.unique_key and not args.shortcode:
+            raise SystemExit("forget-import requires --unique-key or --shortcode")
+        if args.unique_key and (args.shortcode or args.username):
+            raise SystemExit("forget-import --unique-key cannot be combined with --username or --shortcode")
+        if args.username and not args.shortcode:
+            raise SystemExit("forget-import --username requires --shortcode")
+
+        state = ImportedState.load(config.imported_state)
+        result = state.forget(
+            unique_key=args.unique_key,
+            shortcode=args.shortcode,
+            username=args.username,
+            dry_run=args.dry_run,
+        )
+        safe_print(f"matched count: {result.matched_count}")
+        safe_print(f"removed count: {result.removed_count}")
+        safe_print("removed keys:")
+        for key in result.removed_keys:
+            safe_print(f"  {key}")
+        if result.backup_path is not None:
+            safe_print(f"backup: {result.backup_path}")
+        if result.matched_count == 0:
+            safe_print("No imported records matched the given selector.")
+        return 0
 
     info = detect_instagram_url(args.url)
 

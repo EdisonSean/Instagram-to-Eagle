@@ -42,7 +42,7 @@ class AppConfig:
 
 def load_config(path: str | Path) -> AppConfig:
     config_path = Path(path)
-    data = json.loads(config_path.read_text(encoding="utf-8"))
+    data = json.loads(config_path.read_text(encoding="utf-8-sig"))
     return parse_config(data)
 
 
