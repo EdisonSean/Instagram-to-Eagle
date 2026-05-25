@@ -59,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     sync_author_parser.add_argument("--force", action="store_true")
     sync_author_parser.add_argument("--verify-eagle", action="store_true")
     sync_author_parser.add_argument("--max-posts", type=int)
+    sync_author_parser.add_argument("--date-from", help="Process author posts created after this ISO date/datetime.")
+    sync_author_parser.add_argument("--date-to", help="Process author posts created before this ISO date/datetime.")
     sync_author_parser.add_argument("--show-annotation", action="store_true")
     sync_author_parser.add_argument("--ignore-archive", action="store_true")
     sync_author_parser.add_argument("--verbose-gallery-dl", action="store_true")
@@ -74,6 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify_imports_parser.add_argument("--username")
     verify_imports_parser.add_argument("--shortcode")
     verify_imports_parser.add_argument("--folder-id")
+    verify_imports_parser.add_argument("--folder-path")
     verify_imports_parser.add_argument("--dry-run", action="store_true")
 
     subparsers.add_parser("list-folders", help="List Eagle folders.")
@@ -172,15 +175,17 @@ def main(argv: list[str] | None = None) -> int:
             shortcode=args.shortcode,
             username=args.username,
             folder_id=args.folder_id,
+            folder_path=args.folder_path,
             dry_run=args.dry_run,
             log=safe_print,
         )
         return 0 if result["ok"] else 1
 
     if args.command == "sync-post":
+        info = detect_instagram_url(args.post_url)
         result = services.sync_post(
             config,
-            args.post_url,
+            info.normalized_url,
             folder_id=args.folder_id,
             folder_path=args.folder_path,
             dry_run=args.dry_run,
@@ -194,15 +199,18 @@ def main(argv: list[str] | None = None) -> int:
         return result.get("returncode", 0 if result["ok"] else 1)
 
     if args.command == "sync-author":
+        info = detect_instagram_url(args.author_url)
         result = services.sync_author(
             config,
-            args.author_url,
+            info.normalized_url,
             folder_id=args.folder_id,
             folder_path=args.folder_path,
             dry_run=args.dry_run,
             force=args.force,
             verify_eagle=args.verify_eagle,
             max_posts=args.max_posts,
+            date_from=args.date_from,
+            date_to=args.date_to,
             show_annotation=args.show_annotation,
             ignore_archive=args.ignore_archive,
             verbose_gallery_dl=args.verbose_gallery_dl,

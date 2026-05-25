@@ -31,9 +31,16 @@ _RESERVED_AUTHOR_PATHS = {
     "reel",
     "reels",
     "stories",
+    "tv",
 }
 
 _HASHTAG_RE = re.compile(r"(?<!\w)#([\w\u4e00-\u9fff]+)", re.UNICODE)
+
+
+def normalize_instagram_url(url: str) -> str:
+    """Return the canonical Instagram URL used by downloads and Eagle metadata."""
+
+    return detect_instagram_url(url).normalized_url
 
 
 def detect_instagram_url(url: str) -> InstagramUrl:
@@ -59,7 +66,7 @@ def detect_instagram_url(url: str) -> InstagramUrl:
             username=username,
         )
 
-    if len(parts) >= 2 and parts[0] in {"p", "reel"}:
+    if len(parts) >= 2 and parts[0] in {"p", "reel", "tv"}:
         shortcode = parts[1]
         return InstagramUrl(
             mode=InstagramMode.POST,

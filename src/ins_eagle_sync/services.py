@@ -104,9 +104,21 @@ def sync_post(
     if download_result is not None and download_result.returncode != 0:
         return _service_result(False, messages=messages, returncode=download_result.returncode)
 
+    items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
+    empty_result = _fail_if_no_downloaded_items(
+        items,
+        request.target_dir,
+        dry_run=dry_run,
+        download_ran=download_result is not None,
+        messages=messages,
+        log=logger,
+    )
+    if empty_result is not None:
+        return empty_result
+
     return _import_from_items(
         config,
-        scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars),
+        items,
         folder_id=folder_id,
         folder_path=folder_path,
         dry_run=dry_run,
@@ -128,6 +140,8 @@ def sync_author(
     force: bool = False,
     verify_eagle: bool = False,
     max_posts: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     show_annotation: bool = False,
     ignore_archive: bool = False,
     verbose_gallery_dl: bool = False,
@@ -139,14 +153,29 @@ def sync_author(
     if info.mode.value != "author":
         logger("sync-author requires an author URL, e.g. https://www.instagram.com/username/")
         return _service_result(False, messages=messages)
-
-    request = build_gallery_dl_request(
-        config,
-        info.normalized_url,
-        ignore_archive=ignore_archive,
-        verbose=verbose_gallery_dl,
-        max_posts=max_posts,
-    )
+    effective_max_posts = max_posts if max_posts is not None else config.download.max_posts
+    if effective_max_posts == 0 or effective_max_posts < -1:
+        logger("error: max_posts must be -1 or greater than 0.")
+        return _service_result(False, messages=messages)
+    try:
+        request = build_gallery_dl_request(
+            config,
+            info.normalized_url,
+            ignore_archive=ignore_archive,
+            verbose=verbose_gallery_dl,
+            max_posts=max_posts,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except ValueError as exc:
+        logger(f"error: {exc}")
+        return _service_result(False, messages=messages)
+    if effective_max_posts == -1:
+        logger("作者主页模式：不限制抓取数量")
+    else:
+        logger(f"作者主页模式：最多抓取 {effective_max_posts} 条")
+    if date_from or date_to:
+        logger(f"作者主页模式：时间范围 {date_from or '不限'} 到 {date_to or '不限'}")
     download_result = run_gallery_dl(
         config,
         info.normalized_url,
@@ -154,14 +183,28 @@ def sync_author(
         ignore_archive=ignore_archive,
         verbose=verbose_gallery_dl,
         max_posts=max_posts,
+        date_from=date_from,
+        date_to=date_to,
         log=logger,
     )
     if download_result is not None and download_result.returncode != 0:
         return _service_result(False, messages=messages, returncode=download_result.returncode)
 
+    items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
+    empty_result = _fail_if_no_downloaded_items(
+        items,
+        request.target_dir,
+        dry_run=dry_run,
+        download_ran=download_result is not None,
+        messages=messages,
+        log=logger,
+    )
+    if empty_result is not None:
+        return empty_result
+
     return _import_from_items(
         config,
-        scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars),
+        items,
         folder_id=folder_id,
         folder_path=folder_path,
         dry_run=dry_run,
@@ -180,6 +223,7 @@ def verify_imports(
     shortcode: str | None = None,
     username: str | None = None,
     folder_id: str | None = None,
+    folder_path: str | None = None,
     dry_run: bool = False,
     log: LogFn | None = None,
 ) -> dict[str, Any]:
@@ -191,13 +235,22 @@ def verify_imports(
 
     state = ImportedState.load(config.imported_state)
     eagle = EagleClient(config.eagle_api_base)
+    resolved_folder_id = resolve_optional_folder_id(
+        folder_id=folder_id,
+        folder_path=folder_path,
+        eagle=eagle,
+        log=logger,
+    )
+    if resolved_folder_id is False:
+        return _service_result(False, messages=messages)
+
     result = verify_import_records(
         eagle=eagle,
         state=state,
         unique_key=unique_key,
         shortcode=shortcode,
         username=username,
-        folder_id=folder_id,
+        folder_id=resolved_folder_id,
         dry_run=dry_run,
         log=logger,
     )
@@ -303,6 +356,32 @@ def resolve_target_folder_id(
     return None
 
 
+def resolve_optional_folder_id(
+    *,
+    folder_id: str | None,
+    folder_path: str | None,
+    eagle: EagleClient,
+    log: LogFn,
+) -> str | None | bool:
+    if folder_id and folder_path:
+        log("error: --folder-id and --folder-path cannot be used together.")
+        return False
+
+    if folder_id:
+        return folder_id
+
+    if not folder_path:
+        return None
+
+    try:
+        resolved_folder_id = eagle.ensure_folder_path(folder_path)
+    except Exception as exc:  # noqa: BLE001 - convert API failures into service errors.
+        log(f"error: {exc}")
+        return False
+    log(f"resolved Eagle folder path '{folder_path}' to folder id: {resolved_folder_id}")
+    return resolved_folder_id
+
+
 def _import_from_items(
     config: AppConfig,
     items: list[ImportItem],
@@ -354,6 +433,34 @@ def _import_result_to_service(result: Any, messages: list[str]) -> dict[str, Any
             {"unique_key": failure.unique_key, "title": failure.title, "error": failure.error}
             for failure in result.failures
         ],
+    )
+
+
+def _fail_if_no_downloaded_items(
+    items: list[ImportItem],
+    target_dir: Path,
+    *,
+    dry_run: bool,
+    download_ran: bool,
+    messages: list[str],
+    log: LogFn,
+) -> dict[str, Any] | None:
+    if dry_run or not download_ran or items:
+        return None
+
+    log(
+        "error: gallery-dl completed successfully, but no importable Instagram files "
+        f"or metadata were found in {target_dir}. Check the selected date range, "
+        "download archive, cookies/login status, and whether the author has posts in that range."
+    )
+    return _service_result(
+        False,
+        messages=messages,
+        total=0,
+        skipped=0,
+        imported=0,
+        failed=1,
+        failures=[],
     )
 
 

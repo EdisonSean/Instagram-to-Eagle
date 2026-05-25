@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from subprocess import CompletedProcess
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -130,14 +131,99 @@ def test_sync_author_service_passes_max_posts(project_tmp_path):
     ):
         result = services.sync_author(
             config,
-            "https://www.instagram.com/quinn.xyz/",
+            "https://www.instagram.com/quinn.xyz/?hl=en",
             folder_id="folder-1",
             max_posts=12,
+            date_from="2026-01-01",
+            date_to="2026-02-01",
         )
 
     assert result["ok"] is True
+    assert request_mock.call_args.args[1] == "https://www.instagram.com/quinn.xyz/"
     assert request_mock.call_args.kwargs["max_posts"] == 12
+    assert request_mock.call_args.kwargs["date_from"] == "2026-01-01"
+    assert request_mock.call_args.kwargs["date_to"] == "2026-02-01"
     assert run_mock.call_args.kwargs["max_posts"] == 12
+    assert run_mock.call_args.kwargs["date_from"] == "2026-01-01"
+    assert run_mock.call_args.kwargs["date_to"] == "2026-02-01"
+
+
+def test_sync_author_service_allows_unlimited_max_posts(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+    request = SimpleNamespace(target_dir=project_tmp_path / "staging" / "quinn.xyz")
+    logs = []
+
+    with (
+        patch("ins_eagle_sync.services.build_gallery_dl_request", return_value=request) as request_mock,
+        patch("ins_eagle_sync.services.run_gallery_dl", return_value=None) as run_mock,
+        patch("ins_eagle_sync.services.scan_staging_dir", return_value=[]),
+        patch("ins_eagle_sync.services.EagleClient"),
+        patch("ins_eagle_sync.services.ImportedState.load"),
+        patch("ins_eagle_sync.services.import_staging_items", return_value=import_result(total=0, imported=0)),
+    ):
+        result = services.sync_author(
+            config,
+            "https://www.instagram.com/quinn.xyz/",
+            folder_id="folder-1",
+            max_posts=-1,
+            log=logs.append,
+        )
+
+    assert result["ok"] is True
+    assert request_mock.call_args.kwargs["max_posts"] == -1
+    assert run_mock.call_args.kwargs["max_posts"] == -1
+    assert "作者主页模式：不限制抓取数量" in logs
+
+
+def test_sync_author_service_rejects_invalid_max_posts(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+
+    result = services.sync_author(config, "https://www.instagram.com/quinn.xyz/", folder_id="folder-1", max_posts=0)
+
+    assert result["ok"] is False
+    assert "max_posts must be -1 or greater than 0" in "\n".join(result["messages"])
+
+
+def test_sync_author_service_rejects_invalid_date_filter(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+
+    result = services.sync_author(
+        config,
+        "https://www.instagram.com/quinn.xyz/",
+        folder_id="folder-1",
+        date_from="bad-date",
+    )
+
+    assert result["ok"] is False
+    assert "date_from must be an ISO date" in "\n".join(result["messages"])
+
+
+def test_sync_author_service_fails_when_download_produces_no_items(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+    request = SimpleNamespace(target_dir=project_tmp_path / "staging" / "quinn.xyz")
+    logs = []
+
+    with (
+        patch("ins_eagle_sync.services.build_gallery_dl_request", return_value=request),
+        patch(
+            "ins_eagle_sync.services.run_gallery_dl",
+            return_value=CompletedProcess(args=["py"], returncode=0, stdout="", stderr=""),
+        ),
+        patch("ins_eagle_sync.services.scan_staging_dir", return_value=[]),
+        patch("ins_eagle_sync.services.import_staging_items") as import_mock,
+    ):
+        result = services.sync_author(
+            config,
+            "https://www.instagram.com/quinn.xyz/",
+            folder_id="folder-1",
+            log=logs.append,
+        )
+
+    assert result["ok"] is False
+    assert result["total"] == 0
+    assert result["failed"] == 1
+    assert any("no importable Instagram files" in message for message in logs)
+    import_mock.assert_not_called()
 
 
 def test_verify_imports_service_returns_structured_counts(project_tmp_path):
@@ -161,6 +247,75 @@ def test_verify_imports_service_returns_structured_counts(project_tmp_path):
     assert result["ok"] is True
     assert result["checked"] == 2
     assert result["missing"] == 1
+
+
+def test_verify_imports_service_resolves_folder_path(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+    verify_result = SimpleNamespace(
+        checked=1,
+        alive=1,
+        missing=0,
+        alive_but_not_in_folder=0,
+        unknown=0,
+        removed=0,
+    )
+    fake_eagle = type("FakeEagle", (), {"ensure_folder_path": lambda self, path: "folder-1"})()
+
+    with (
+        patch("ins_eagle_sync.services.EagleClient", return_value=fake_eagle),
+        patch("ins_eagle_sync.services.ImportedState.load"),
+        patch("ins_eagle_sync.services.verify_import_records", return_value=verify_result) as verify_mock,
+    ):
+        result = services.verify_imports(
+            config,
+            shortcode="ABC123",
+            folder_path="Instagram/quinn.xyz",
+            dry_run=True,
+        )
+
+    assert result["ok"] is True
+    assert verify_mock.call_args.kwargs["folder_id"] == "folder-1"
+
+
+def test_verify_imports_service_without_folder_keeps_existing_behavior(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+    verify_result = SimpleNamespace(
+        checked=1,
+        alive=1,
+        missing=0,
+        alive_but_not_in_folder=0,
+        unknown=0,
+        removed=0,
+    )
+
+    with (
+        patch("ins_eagle_sync.services.EagleClient"),
+        patch("ins_eagle_sync.services.ImportedState.load"),
+        patch("ins_eagle_sync.services.verify_import_records", return_value=verify_result) as verify_mock,
+    ):
+        result = services.verify_imports(config, shortcode="ABC123", dry_run=True)
+
+    assert result["ok"] is True
+    assert verify_mock.call_args.kwargs["folder_id"] is None
+
+
+def test_verify_imports_service_rejects_folder_id_and_folder_path(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+
+    with (
+        patch("ins_eagle_sync.services.ImportedState.load"),
+        patch("ins_eagle_sync.services.verify_import_records") as verify_mock,
+    ):
+        result = services.verify_imports(
+            config,
+            shortcode="ABC123",
+            folder_id="folder-1",
+            folder_path="Instagram/quinn.xyz",
+        )
+
+    assert result["ok"] is False
+    assert "cannot be used together" in "\n".join(result["messages"])
+    verify_mock.assert_not_called()
 
 
 def test_forget_import_service_can_be_called_directly(project_tmp_path):

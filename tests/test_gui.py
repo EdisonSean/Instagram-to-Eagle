@@ -31,6 +31,21 @@ class FakeEntry:
         return self.value
 
 
+class FakeFrame:
+    def __init__(self) -> None:
+        self.visible = True
+        self.propagate = True
+
+    def grid(self, *args, **kwargs) -> None:
+        self.visible = True
+
+    def grid_remove(self) -> None:
+        self.visible = False
+
+    def grid_propagate(self, value) -> None:
+        self.propagate = bool(value)
+
+
 def test_gui_module_exposes_main() -> None:
     assert callable(gui.main)
     assert APP_TITLE == "Instagram to Eagle"
@@ -111,6 +126,170 @@ def test_storage_parent_config_can_be_loaded(project_tmp_path) -> None:
     assert loaded.staging_dir == parent / "_staging"
     assert loaded.archive_db == parent / "_cache" / "gallery-dl-archive.sqlite3"
     assert loaded.imported_state == parent / "_cache" / "eagle-imported.json"
+
+
+def test_old_proxy_config_migrates_to_manual_mode() -> None:
+    data = gui.normalize_config_data(
+        {
+            "proxy": {
+                "enabled": True,
+                "http_proxy": "http://127.0.0.1:10809",
+                "https_proxy": "http://127.0.0.1:10809",
+            }
+        }
+    )
+
+    assert data["proxy"]["mode"] == "manual"
+    assert data["proxy"]["enabled"] is True
+
+
+def test_proxy_mode_none_normalizes_to_disabled() -> None:
+    data = gui.normalize_config_data({"proxy": {"mode": "none", "http_proxy": "http://old"}})
+
+    assert data["proxy"]["mode"] == "none"
+    assert data["proxy"]["enabled"] is False
+
+
+def test_apply_proxy_settings_auto_saves_detected_proxy() -> None:
+    data = gui.apply_proxy_settings(
+        gui.default_config_data(),
+        mode_label=gui.PROXY_AUTO,
+        http_proxy="",
+        https_proxy="",
+        detected_result="当前检测结果：已检测到 http://127.0.0.1:10809",
+    )
+
+    assert data["proxy"]["mode"] == "auto"
+    assert data["proxy"]["detected_proxy"] == "http://127.0.0.1:10809"
+    assert data["proxy"]["http_proxy"] == ""
+
+
+def test_apply_proxy_settings_manual_copies_http_to_https() -> None:
+    data = gui.apply_proxy_settings(
+        gui.default_config_data(),
+        mode_label=gui.PROXY_MANUAL,
+        http_proxy="127.0.0.1:10809",
+        https_proxy="",
+    )
+
+    assert data["proxy"]["mode"] == "manual"
+    assert data["proxy"]["http_proxy"] == "http://127.0.0.1:10809"
+    assert data["proxy"]["https_proxy"] == "http://127.0.0.1:10809"
+
+
+def test_apply_proxy_settings_none_clears_proxy() -> None:
+    data = gui.apply_proxy_settings(
+        gui.default_config_data(),
+        mode_label=gui.PROXY_NONE,
+        http_proxy="http://127.0.0.1:10809",
+        https_proxy="http://127.0.0.1:10809",
+    )
+
+    assert data["proxy"]["mode"] == "none"
+    assert data["proxy"]["enabled"] is False
+    assert data["proxy"]["http_proxy"] == ""
+    assert data["proxy"]["https_proxy"] == ""
+
+
+def test_default_max_posts_is_unlimited() -> None:
+    assert gui.default_config_data()["download"]["max_posts"] == -1
+
+
+def test_sync_mode_keeps_reserved_author_slot_while_toggling_panel() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.author_options_slot = FakeFrame()
+    app.author_options_panel = FakeFrame()
+    app.recent_posts_frame = FakeFrame()
+    app.date_options_frame = FakeFrame()
+    app.author_range_choice = SimpleNamespace(get=lambda: gui.AUTHOR_SYNC_UNLIMITED)
+    app.mode = SimpleNamespace(get=lambda: gui.MODE_POST)
+
+    gui.InsEagleSyncApp._sync_mode_changed(app, gui.MODE_POST)
+    assert app.author_options_slot.visible is True
+    assert app.author_options_panel.visible is False
+
+    gui.InsEagleSyncApp._sync_mode_changed(app, gui.MODE_AUTHOR)
+    assert app.author_options_slot.visible is True
+    assert app.author_options_panel.visible is True
+
+
+def test_author_range_changed_only_shows_relevant_controls() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.recent_posts_frame = FakeFrame()
+    app.date_options_frame = FakeFrame()
+    app.author_range_choice = SimpleNamespace(get=lambda: gui.AUTHOR_SYNC_UNLIMITED)
+
+    gui.InsEagleSyncApp._author_range_changed(app, gui.AUTHOR_SYNC_UNLIMITED)
+    assert app.recent_posts_frame.visible is False
+    assert app.date_options_frame.visible is False
+
+    gui.InsEagleSyncApp._author_range_changed(app, gui.AUTHOR_SYNC_RECENT)
+    assert app.recent_posts_frame.visible is True
+    assert app.date_options_frame.visible is False
+
+    gui.InsEagleSyncApp._author_range_changed(app, gui.AUTHOR_SYNC_DATE_RANGE)
+    assert app.recent_posts_frame.visible is False
+    assert app.date_options_frame.visible is True
+
+
+def test_read_max_posts_accepts_unlimited_and_rejects_zero() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.max_posts_entry = FakeEntry()
+    logs = []
+    app._append_log = logs.append
+
+    app.max_posts_entry.insert(0, "-1")
+    assert gui.InsEagleSyncApp._read_max_posts(app) == -1
+
+    app.max_posts_entry.delete(0, "end")
+    app.max_posts_entry.insert(0, "0")
+    assert gui.InsEagleSyncApp._read_max_posts(app) is False
+    assert "必须是 -1 或大于 0" in logs[-1]
+
+
+def test_read_author_sync_range_returns_matching_params() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.max_posts_entry = FakeEntry()
+    app.anchor_date_entry = FakeEntry()
+    app.date_range_amount_entry = FakeEntry()
+    app.date_range_choice = SimpleNamespace(get=lambda: gui.DATE_RANGE_WEEK)
+    logs = []
+    app._append_log = logs.append
+
+    app.max_posts_entry.insert(0, "12")
+    app.anchor_date_entry.insert(0, "2026-05-25")
+    app.date_range_amount_entry.insert(0, "2")
+
+    app.author_range_choice = SimpleNamespace(get=lambda: gui.AUTHOR_SYNC_UNLIMITED)
+    assert gui.InsEagleSyncApp._read_author_sync_range(app) == (-1, None, None)
+
+    app.author_range_choice = SimpleNamespace(get=lambda: gui.AUTHOR_SYNC_RECENT)
+    assert gui.InsEagleSyncApp._read_author_sync_range(app) == (12, None, None)
+
+    app.author_range_choice = SimpleNamespace(get=lambda: gui.AUTHOR_SYNC_DATE_RANGE)
+    assert gui.InsEagleSyncApp._read_author_sync_range(app) == (-1, "2026-05-12", "2026-05-26")
+
+
+def test_author_date_range_uses_anchor_date_and_selected_window() -> None:
+    assert gui.author_date_range("2026-05-25", gui.DATE_RANGE_DAY) == ("2026-05-25", "2026-05-26")
+    assert gui.author_date_range("2026-05-25", gui.DATE_RANGE_WEEK) == ("2026-05-19", "2026-05-26")
+    assert gui.author_date_range("2026-05-25", gui.DATE_RANGE_MONTH) == ("2026-04-26", "2026-05-26")
+    assert gui.author_date_range("2026-05-25", gui.DATE_RANGE_YEAR) == ("2025-05-26", "2026-05-26")
+    assert gui.author_date_range("2026-05-25", gui.DATE_RANGE_DAY, 7) == ("2026-05-19", "2026-05-26")
+    assert gui.author_date_range("2026-05-25", gui.DATE_RANGE_WEEK, 2) == ("2026-05-12", "2026-05-26")
+    assert gui.author_date_range("2026-05-25", gui.DATE_RANGE_MONTH, 3) == ("2026-02-26", "2026-05-26")
+
+
+def test_read_date_range_uses_anchor_date_and_range_choice() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.anchor_date_entry = FakeEntry()
+    app.date_range_amount_entry = FakeEntry()
+    app.date_range_choice = SimpleNamespace(get=lambda: gui.DATE_RANGE_WEEK)
+
+    app.anchor_date_entry.insert(0, "2026-05-25")
+    app.date_range_amount_entry.insert(0, "2")
+
+    assert gui.InsEagleSyncApp._read_date_range(app) == ("2026-05-12", "2026-05-26")
 
 
 def test_browser_login_settings_write_from_browser(project_tmp_path) -> None:

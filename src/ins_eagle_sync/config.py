@@ -11,12 +11,14 @@ class ProxyConfig:
     enabled: bool
     http_proxy: str | None = None
     https_proxy: str | None = None
+    mode: str = "auto"
+    detected_proxy: str | None = None
 
 
 @dataclass(frozen=True)
 class DownloadConfig:
     sleep_request: str = "8-15"
-    max_posts: int = 50
+    max_posts: int = -1
 
 
 @dataclass(frozen=True)
@@ -69,13 +71,15 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         default_eagle_root_folder=str(data.get("default_eagle_root_folder") or default_folder_path),
         title_caption_chars=int(data.get("title_caption_chars", 70)),
         proxy=ProxyConfig(
-            enabled=bool(proxy_data.get("enabled", False)),
+            enabled=_proxy_enabled(proxy_data),
             http_proxy=proxy_data.get("http_proxy"),
             https_proxy=proxy_data.get("https_proxy"),
+            mode=_proxy_mode(proxy_data),
+            detected_proxy=_optional_text(proxy_data.get("detected_proxy")),
         ),
         download=DownloadConfig(
             sleep_request=str(download_data.get("sleep_request", "8-15")),
-            max_posts=int(download_data.get("max_posts", 50)),
+            max_posts=int(download_data.get("max_posts", -1)),
         ),
         cookies=CookiesConfig(
             enabled=bool(cookies_data.get("enabled", False)),
@@ -101,3 +105,18 @@ def _optional_path(value: Any) -> Path | None:
     if text is None:
         return None
     return Path(text).expanduser()
+
+
+def _proxy_mode(proxy_data: dict[str, Any]) -> str:
+    mode = _optional_text(proxy_data.get("mode"))
+    if mode in {"auto", "manual", "none"}:
+        return mode
+    if proxy_data.get("http_proxy") or proxy_data.get("https_proxy"):
+        return "manual"
+    if "enabled" in proxy_data:
+        return "manual" if bool(proxy_data.get("enabled")) else "none"
+    return "auto"
+
+
+def _proxy_enabled(proxy_data: dict[str, Any]) -> bool:
+    return _proxy_mode(proxy_data) != "none"

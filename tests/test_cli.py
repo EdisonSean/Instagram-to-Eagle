@@ -197,7 +197,53 @@ def test_verify_imports_cli_calls_service(project_tmp_path):
     assert exit_code == 0
     assert service_mock.call_args.kwargs["shortcode"] == "DYld7hQCT90"
     assert service_mock.call_args.kwargs["folder_id"] == "folder-1"
+    assert service_mock.call_args.kwargs["folder_path"] is None
     assert service_mock.call_args.kwargs["dry_run"] is True
+
+
+def test_verify_imports_cli_accepts_folder_path(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+
+    with patch("ins_eagle_sync.cli.services.verify_imports", return_value={"ok": True, "messages": []}) as service_mock:
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "verify-imports",
+                "--shortcode",
+                "DYld7hQCT90",
+                "--folder-path",
+                "Instagram/quinn.xyz",
+                "--dry-run",
+            ]
+        )
+
+    assert exit_code == 0
+    assert service_mock.call_args.kwargs["shortcode"] == "DYld7hQCT90"
+    assert service_mock.call_args.kwargs["folder_id"] is None
+    assert service_mock.call_args.kwargs["folder_path"] == "Instagram/quinn.xyz"
+    assert service_mock.call_args.kwargs["dry_run"] is True
+
+
+def test_verify_imports_cli_without_folder_keeps_existing_behavior(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+
+    with patch("ins_eagle_sync.cli.services.verify_imports", return_value={"ok": True, "messages": []}) as service_mock:
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "verify-imports",
+                "--shortcode",
+                "DYld7hQCT90",
+            ]
+        )
+
+    assert exit_code == 0
+    assert service_mock.call_args.kwargs["folder_id"] is None
+    assert service_mock.call_args.kwargs["folder_path"] is None
 
 
 def test_sync_post_calls_service(project_tmp_path):
@@ -210,7 +256,7 @@ def test_sync_post_calls_service(project_tmp_path):
                 "--config",
                 str(config_path),
                 "sync-post",
-                "https://www.instagram.com/p/ABC123/",
+                "https://www.instagram.com/p/ABC123/?img_index=1",
                 "--folder-path",
                 "Instagram/quinn.xyz",
                 "--dry-run",
@@ -261,7 +307,7 @@ def test_sync_author_calls_service(project_tmp_path):
                 "--config",
                 str(config_path),
                 "sync-author",
-                "https://www.instagram.com/quinn.xyz/",
+                "https://www.instagram.com/quinn.xyz/?hl=en",
                 "--folder-path",
                 "Instagram/quinn.xyz",
                 "--dry-run",
@@ -269,6 +315,10 @@ def test_sync_author_calls_service(project_tmp_path):
                 "--verify-eagle",
                 "--max-posts",
                 "12",
+                "--date-from",
+                "2026-01-01",
+                "--date-to",
+                "2026-02-01",
                 "--show-annotation",
                 "--ignore-archive",
                 "--verbose-gallery-dl",
@@ -282,4 +332,28 @@ def test_sync_author_calls_service(project_tmp_path):
     assert service_mock.call_args.kwargs["force"] is True
     assert service_mock.call_args.kwargs["verify_eagle"] is True
     assert service_mock.call_args.kwargs["max_posts"] == 12
+    assert service_mock.call_args.kwargs["date_from"] == "2026-01-01"
+    assert service_mock.call_args.kwargs["date_to"] == "2026-02-01"
     assert service_mock.call_args.kwargs["show_annotation"] is True
+
+
+def test_sync_author_cli_accepts_unlimited_max_posts(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+
+    with patch("ins_eagle_sync.cli.services.sync_author", return_value={"ok": True, "messages": []}) as service_mock:
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "sync-author",
+                "https://www.instagram.com/quinn.xyz/",
+                "--folder-id",
+                "folder-1",
+                "--max-posts",
+                "-1",
+            ]
+        )
+
+    assert exit_code == 0
+    assert service_mock.call_args.kwargs["max_posts"] == -1

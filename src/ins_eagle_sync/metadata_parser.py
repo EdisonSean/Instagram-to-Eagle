@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .utils import extract_hashtags
+from .utils import InstagramMode, detect_instagram_url, extract_hashtags, normalize_instagram_url
 
 
 MEDIA_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov"}
@@ -126,7 +126,13 @@ def parse_metadata_item(
     resolved_file_path = _resolve_file_path(item, metadata_path, file_path)
     root = Path(staging_dir) if staging_dir is not None else None
 
+    source_url_raw = _first_text(item, "post_url", "webpage_url", "source_url", "url")
+    normalized_source_url = _normalize_source_url(source_url_raw)
+    source_url_info = _detect_source_post_url(normalized_source_url)
+
     shortcode = _first_text(item, "post_shortcode", "shortcode_id", "shortcode", "sidecar_shortcode", "code")
+    if not shortcode:
+        shortcode = source_url_info.shortcode if source_url_info is not None else ""
     if not shortcode:
         shortcode = _infer_shortcode_from_path(resolved_file_path, metadata_path, root)
     shortcode = shortcode or "unknown"
@@ -144,8 +150,8 @@ def parse_metadata_item(
         or default_media_index
     )
 
-    website = f"https://www.instagram.com/p/{shortcode}/"
-    source_url = _first_text(item, "post_url", "webpage_url", "source_url", "url") or website
+    website = _website_from_source_url(normalized_source_url, shortcode)
+    source_url = normalized_source_url or website
     hashtags = extract_hashtags(caption)
     title = build_import_title(caption, username, title_caption_chars)
 
@@ -219,6 +225,32 @@ def build_tags(username: str, shortcode: str, hashtags: list[str]) -> list[str]:
 
 def build_unique_key(username: str, shortcode: str, media_index: int) -> str:
     return f"instagram:{username}:{shortcode}:{media_index:02d}"
+
+
+def _normalize_source_url(source_url: str) -> str:
+    if not source_url:
+        return ""
+    try:
+        return normalize_instagram_url(source_url)
+    except ValueError:
+        return source_url.strip()
+
+
+def _detect_source_post_url(source_url: str) -> Any | None:
+    if not source_url:
+        return None
+    try:
+        info = detect_instagram_url(source_url)
+    except ValueError:
+        return None
+    return info if info.mode == InstagramMode.POST else None
+
+
+def _website_from_source_url(source_url: str, shortcode: str) -> str:
+    info = _detect_source_post_url(source_url)
+    if info is not None and info.shortcode == shortcode:
+        return info.normalized_url
+    return f"https://www.instagram.com/p/{shortcode}/"
 
 
 def _load_single_metadata(metadata_path: Path) -> dict[str, Any]:

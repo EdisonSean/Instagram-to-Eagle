@@ -36,6 +36,25 @@ def test_parse_metadata_item_normalizes_common_fields(project_tmp_path):
     assert result.hashtags == ["tag"]
 
 
+def test_parse_metadata_item_normalizes_source_url_for_website_and_annotation(project_tmp_path):
+    metadata_path = project_tmp_path / "ABC123.json"
+    item = {
+        "num": 1,
+        "description": "caption",
+        "username": "author",
+        "post_url": "https://www.instagram.com/reel/ABC123/?igsh=abc#x",
+        "filename": "video.mp4",
+    }
+
+    result = parse_metadata_item(item, metadata_path)
+
+    assert result.shortcode == "ABC123"
+    assert result.website == "https://www.instagram.com/reel/ABC123/"
+    assert result.source_url == "https://www.instagram.com/reel/ABC123/"
+    assert result.unique_key == "instagram:author:ABC123:01"
+    assert "https://www.instagram.com/reel/ABC123/" in result.annotation
+
+
 def test_parse_gallery_dl_instagram_fields_prefers_post_shortcode(project_tmp_path):
     metadata = json.loads((FIXTURES_DIR / "instagram_sidecar_item.json").read_text(encoding="utf-8"))
     file_path = project_tmp_path / "unknown" / "DYld7hQCT90" / "media_02.jpg"

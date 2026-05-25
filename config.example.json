@@ -11,9 +11,10 @@
   "last_eagle_folder_id": "",
   "title_caption_chars": 70,
   "proxy": {
-    "enabled": true,
-    "http_proxy": "http://127.0.0.1:10809",
-    "https_proxy": "http://127.0.0.1:10809"
+    "mode": "auto",
+    "http_proxy": "",
+    "https_proxy": "",
+    "detected_proxy": ""
   },
   "cookies": {
     "enabled": false,
@@ -22,6 +23,6 @@
   },
   "download": {
     "sleep_request": "8-15",
-    "max_posts": 50
+    "max_posts": -1
   }
 }

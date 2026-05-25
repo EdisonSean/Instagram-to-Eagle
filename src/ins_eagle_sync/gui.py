@@ -10,6 +10,7 @@ import traceback
 import tkinter as tk
 import webbrowser
 from copy import deepcopy
+from datetime import date, timedelta
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import Any, Callable
@@ -23,6 +24,7 @@ from . import services
 from .config import AppConfig, load_config, parse_config
 from .eagle_client import EagleClient
 from .gallerydl_runner import build_cookie_args, build_subprocess_env, format_command_for_log, is_browser_cookie_error
+from .proxy_utils import detect_system_proxy, normalize_proxy_url, proxy_mode_label
 from .ui_theme import APP_TITLE, BUTTON_HEIGHT, COLORS, FONTS, INPUT_HEIGHT, RADIUS, SPACE
 from .utils import InstagramMode, detect_instagram_url
 
@@ -43,6 +45,21 @@ DEFAULT_LOGIN_TEST_URL = "https://www.instagram.com/instagram/"
 LOGIN_COOKIE_FILE = "使用 cookies.txt 文件（推荐，稳定）"
 LOGIN_BROWSER = "自动从浏览器读取登录状态（实验性）"
 LOGIN_NONE = "不登录，仅下载公开内容"
+PROXY_AUTO = "自动检测系统代理（推荐）"
+PROXY_MANUAL = "手动设置代理"
+PROXY_NONE = "不使用代理"
+PROXY_MODE_VALUES = (PROXY_AUTO, PROXY_MANUAL, PROXY_NONE)
+PROXY_MODE_TO_VALUE = {PROXY_AUTO: "auto", PROXY_MANUAL: "manual", PROXY_NONE: "none"}
+PROXY_VALUE_TO_MODE = {"auto": PROXY_AUTO, "manual": PROXY_MANUAL, "none": PROXY_NONE}
+DATE_RANGE_DAY = "天"
+DATE_RANGE_WEEK = "周"
+DATE_RANGE_MONTH = "月"
+DATE_RANGE_YEAR = "年"
+DATE_RANGE_VALUES = (DATE_RANGE_DAY, DATE_RANGE_WEEK, DATE_RANGE_MONTH, DATE_RANGE_YEAR)
+AUTHOR_SYNC_UNLIMITED = "不限制数量"
+AUTHOR_SYNC_RECENT = "最近 N 条"
+AUTHOR_SYNC_DATE_RANGE = "按时间范围"
+AUTHOR_SYNC_RANGE_VALUES = (AUTHOR_SYNC_UNLIMITED, AUTHOR_SYNC_RECENT, AUTHOR_SYNC_DATE_RANGE)
 BROWSER_LABELS = ("Chrome", "Edge", "Firefox")
 BROWSER_VALUES = {"Chrome": "chrome", "Edge": "edge", "Firefox": "firefox"}
 COOKIE_HELP_URL = "https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc"
@@ -74,9 +91,10 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "last_eagle_folder_id": "",
     "title_caption_chars": 70,
     "proxy": {
-        "enabled": True,
-        "http_proxy": "http://127.0.0.1:10809",
-        "https_proxy": "http://127.0.0.1:10809",
+        "mode": "auto",
+        "http_proxy": "",
+        "https_proxy": "",
+        "detected_proxy": "",
     },
     "cookies": {
         "enabled": False,
@@ -85,7 +103,7 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
     },
     "download": {
         "sleep_request": "8-15",
-        "max_posts": 50,
+        "max_posts": -1,
     },
 }
 
@@ -105,6 +123,9 @@ class InsEagleSyncApp(_BaseWindow):
         self.worker: threading.Thread | None = None
         self.setting_entries: dict[str, Any] = {}
         self.status_var = ctk.StringVar(value=STATUS_READY)
+        self.proxy_detect_result_var = ctk.StringVar(value="当前检测结果：未检测")
+        self.date_range_var = ctk.StringVar(value=DATE_RANGE_DAY)
+        self.author_sync_range_var = ctk.StringVar(value=AUTHOR_SYNC_UNLIMITED)
         self.selected_folder_id: str | None = None
         self.selected_default_folder_id: str | None = None
         self.storage_preview_vars = {
@@ -369,11 +390,99 @@ class InsEagleSyncApp(_BaseWindow):
         )
         self.mode.grid(row=3, column=1, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="ew")
 
-        ctk.CTkLabel(source, text="最多同步帖子数", text_color=COLORS["text"], font=FONTS["label"]).grid(
-            row=3, column=2, padx=(0, SPACE["sm"]), pady=(0, SPACE["lg"]), sticky="e"
+        self.author_options_slot = ctk.CTkFrame(source, fg_color="transparent", height=158)
+        self.author_options_slot.grid(row=4, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="ew")
+        self.author_options_slot.grid_columnconfigure(0, weight=1)
+        try:
+            self.author_options_slot.grid_propagate(False)
+        except Exception:  # noqa: BLE001 - test doubles may not implement propagation controls.
+            pass
+
+        self.author_options_panel = ctk.CTkFrame(
+            self.author_options_slot,
+            fg_color=COLORS["surface_2"],
+            corner_radius=RADIUS["control"],
         )
-        self.max_posts_entry = self._entry(source, width=112)
-        self.max_posts_entry.grid(row=3, column=3, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="e")
+        self.author_options_panel.grid(row=0, column=0, sticky="ew")
+        self.author_options_panel.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            self.author_options_panel,
+            text="作者同步范围",
+            text_color=COLORS["text"],
+            font=FONTS["label"],
+        ).grid(row=0, column=0, padx=SPACE["md"], pady=(SPACE["md"], SPACE["sm"]), sticky="w")
+        self.author_range_choice = ctk.CTkSegmentedButton(
+            self.author_options_panel,
+            values=list(AUTHOR_SYNC_RANGE_VALUES),
+            variable=self.author_sync_range_var,
+            command=self._author_range_changed,
+            height=34,
+            fg_color=COLORS["surface_3"],
+            selected_color=COLORS["primary"],
+            selected_hover_color=COLORS["primary_hover"],
+            unselected_color=COLORS["surface_3"],
+            unselected_hover_color=COLORS["card_hover"],
+            text_color=COLORS["text"],
+            font=FONTS["button"],
+        )
+        self.author_range_choice.grid(row=0, column=1, padx=SPACE["md"], pady=(SPACE["md"], SPACE["sm"]), sticky="ew")
+        self.author_range_choice.set(AUTHOR_SYNC_UNLIMITED)
+
+        self.recent_posts_frame = ctk.CTkFrame(self.author_options_panel, fg_color="transparent")
+        self.recent_posts_frame.grid(row=1, column=0, columnspan=2, padx=SPACE["md"], pady=(0, SPACE["md"]), sticky="ew")
+        self.recent_posts_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            self.recent_posts_frame,
+            text="最多同步帖子数",
+            text_color=COLORS["text"],
+            font=FONTS["label"],
+        ).grid(row=0, column=0, padx=(0, SPACE["sm"]), sticky="w")
+        self.max_posts_entry = self._entry(self.recent_posts_frame, width=112)
+        self.max_posts_entry.grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(
+            self.recent_posts_frame,
+            text="仅在“最近 N 条”模式下生效。",
+            text_color=COLORS["text_muted"],
+            font=FONTS["small"],
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        self.date_options_frame = ctk.CTkFrame(self.author_options_panel, fg_color="transparent")
+        self.date_options_frame.grid(row=2, column=0, columnspan=2, padx=SPACE["md"], pady=(0, SPACE["md"]), sticky="ew")
+        self.date_options_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            self.date_options_frame,
+            text="开始日期",
+            text_color=COLORS["text"],
+            font=FONTS["label"],
+        ).grid(row=0, column=0, padx=(0, SPACE["sm"]), pady=0, sticky="w")
+        self.anchor_date_entry = self._entry(self.date_options_frame, placeholder="YYYY-MM-DD", width=112)
+        self.anchor_date_entry.grid(row=0, column=1, pady=0, sticky="w")
+        ctk.CTkLabel(
+            self.date_options_frame,
+            text="范围",
+            text_color=COLORS["text"],
+            font=FONTS["label"],
+        ).grid(row=1, column=0, padx=(0, SPACE["sm"]), pady=(SPACE["xs"], 0), sticky="w")
+        self.date_range_frame = ctk.CTkFrame(self.date_options_frame, fg_color="transparent")
+        self.date_range_frame.grid(row=1, column=1, pady=(SPACE["xs"], 0), sticky="w")
+        self.date_range_amount_entry = self._entry(self.date_range_frame, width=52)
+        self.date_range_amount_entry.grid(row=0, column=0, padx=(0, SPACE["xs"]), sticky="e")
+        self.date_range_choice = ctk.CTkSegmentedButton(
+            self.date_range_frame,
+            values=list(DATE_RANGE_VALUES),
+            variable=self.date_range_var,
+            height=32,
+            fg_color=COLORS["surface_2"],
+            selected_color=COLORS["primary"],
+            selected_hover_color=COLORS["primary_hover"],
+            unselected_color=COLORS["surface_2"],
+            unselected_hover_color=COLORS["surface_3"],
+            text_color=COLORS["text"],
+            font=FONTS["button"],
+        )
+        self.date_range_choice.grid(row=0, column=1, sticky="e")
+        self._set_entry(self.date_range_amount_entry, "1")
+        self.date_range_choice.set(DATE_RANGE_DAY)
 
         destination = self._card(parent, 2, "2. 导入位置", "▱", columns=3)
         destination.grid_columnconfigure(1, weight=1)
@@ -575,7 +684,7 @@ class InsEagleSyncApp(_BaseWindow):
         for column in range(4):
             connect_card.grid_columnconfigure(column, weight=1)
         self._add_compact_field(connect_card, 1, 0, "Eagle 本地 API 地址", "eagle_api_base")
-        self._add_compact_field(connect_card, 1, 2, "HTTPS 代理", "https_proxy")
+        self._add_compact_field(connect_card, 1, 2, "请求间隔", "sleep_request")
         self._add_compact_field(
             connect_card,
             2,
@@ -585,9 +694,8 @@ class InsEagleSyncApp(_BaseWindow):
             button_text="选择",
             button_command=self.choose_default_eagle_folder,
         )
-        self._add_compact_field(connect_card, 2, 2, "默认最多同步帖子数", "max_posts")
-        self._add_compact_field(connect_card, 3, 0, "HTTP 代理", "http_proxy")
-        self._add_compact_field(connect_card, 3, 2, "请求间隔", "sleep_request")
+        self._add_compact_field(connect_card, 2, 2, "作者主页默认最多同步帖子数", "max_posts")
+        self._add_proxy_settings(connect_card, 3)
 
         actions = ctk.CTkFrame(connect_card, corner_radius=0, fg_color="transparent")
         actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=SPACE["lg"], pady=(SPACE["md"], SPACE["lg"]))
@@ -643,6 +751,79 @@ class InsEagleSyncApp(_BaseWindow):
         if key == "default_folder_path":
             entry.bind("<KeyRelease>", self._default_folder_path_changed)
 
+    def _add_proxy_settings(self, parent: Any, row: int) -> None:
+        frame = ctk.CTkFrame(parent, corner_radius=RADIUS["control"], fg_color=COLORS["surface_2"])
+        frame.grid(row=row, column=0, columnspan=4, sticky="ew", padx=SPACE["lg"], pady=SPACE["sm"])
+        frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(frame, text="代理设置", text_color=COLORS["text"], font=FONTS["section"]).grid(
+            row=0, column=0, columnspan=3, padx=SPACE["md"], pady=(SPACE["md"], SPACE["sm"]), sticky="w"
+        )
+        self.proxy_mode = ctk.CTkSegmentedButton(
+            frame,
+            values=list(PROXY_MODE_VALUES),
+            command=self._proxy_mode_changed,
+            height=38,
+            fg_color=COLORS["surface_3"],
+            selected_color=COLORS["primary"],
+            selected_hover_color=COLORS["primary_hover"],
+            unselected_color=COLORS["surface_3"],
+            unselected_hover_color=COLORS["card_hover"],
+            text_color=COLORS["text"],
+            font=FONTS["button"],
+        )
+        self.proxy_mode.grid(row=1, column=0, columnspan=3, padx=SPACE["md"], pady=(0, SPACE["sm"]), sticky="ew")
+
+        self.proxy_auto_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        self.proxy_auto_frame.grid(row=2, column=0, columnspan=3, sticky="ew", padx=SPACE["md"], pady=(0, SPACE["sm"]))
+        self.proxy_auto_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            self.proxy_auto_frame,
+            text="自动读取 Windows 或环境变量中的代理设置，适合大多数用户。",
+            text_color=COLORS["text_muted"],
+            font=FONTS["small"],
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, SPACE["xs"]))
+        self._button(self.proxy_auto_frame, "立即检测", self.detect_proxy_now, width=96).grid(
+            row=1, column=0, padx=(0, SPACE["sm"]), sticky="w"
+        )
+        ctk.CTkLabel(
+            self.proxy_auto_frame,
+            textvariable=self.proxy_detect_result_var,
+            text_color=COLORS["text_muted"],
+            font=FONTS["body"],
+        ).grid(row=1, column=1, sticky="w")
+
+        self.proxy_manual_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        self.proxy_manual_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=SPACE["md"], pady=(0, SPACE["sm"]))
+        self.proxy_manual_frame.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            self.proxy_manual_frame,
+            text="如果你知道自己的代理地址，可以手动填写，例如 http://127.0.0.1:10809。",
+            text_color=COLORS["text_muted"],
+            font=FONTS["small"],
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, SPACE["xs"]))
+        ctk.CTkLabel(self.proxy_manual_frame, text="HTTP 代理", text_color=COLORS["text"], font=FONTS["label"]).grid(
+            row=1, column=0, padx=(0, SPACE["sm"]), pady=SPACE["xs"], sticky="w"
+        )
+        self.setting_entries["http_proxy"] = self._entry(self.proxy_manual_frame)
+        self.setting_entries["http_proxy"].grid(row=1, column=1, padx=(0, SPACE["sm"]), pady=SPACE["xs"], sticky="ew")
+        ctk.CTkLabel(self.proxy_manual_frame, text="HTTPS 代理", text_color=COLORS["text"], font=FONTS["label"]).grid(
+            row=2, column=0, padx=(0, SPACE["sm"]), pady=SPACE["xs"], sticky="w"
+        )
+        self.setting_entries["https_proxy"] = self._entry(self.proxy_manual_frame)
+        self.setting_entries["https_proxy"].grid(row=2, column=1, padx=(0, SPACE["sm"]), pady=SPACE["xs"], sticky="ew")
+        self._button(self.proxy_manual_frame, "清空代理", self.clear_proxy_fields, width=96).grid(
+            row=1, column=2, rowspan=2, sticky="e"
+        )
+
+        self.proxy_none_frame = ctk.CTkFrame(frame, fg_color="transparent")
+        self.proxy_none_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=SPACE["md"], pady=(0, SPACE["md"]))
+        ctk.CTkLabel(
+            self.proxy_none_frame,
+            text="直接连接网络，适合无需代理的网络环境。",
+            text_color=COLORS["text_muted"],
+            font=FONTS["small"],
+        ).grid(row=0, column=0, sticky="w")
+
     def _add_storage_preview(self, parent: Any, row: int) -> None:
         frame = ctk.CTkFrame(parent, corner_radius=RADIUS["control"], fg_color=COLORS["surface_2"])
         frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(SPACE["sm"], SPACE["lg"]))
@@ -673,8 +854,13 @@ class InsEagleSyncApp(_BaseWindow):
         self.selected_default_folder_id = get_config_value(self.config_data, "default_folder_id") or None
         self._set_entry(self.folder_path_entry, sync_folder["folder_path"])
         self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
+        self._set_entry(self.anchor_date_entry, today_iso())
+        self._set_entry(self.date_range_amount_entry, "1")
+        self.author_range_choice.set(AUTHOR_SYNC_UNLIMITED)
+        self.date_range_choice.set(DATE_RANGE_DAY)
         self._populate_settings_form()
         self._sync_mode_changed(MODE_POST)
+        self._author_range_changed(AUTHOR_SYNC_UNLIMITED)
 
     def _load_config(self) -> AppConfig:
         try:
@@ -697,6 +883,12 @@ class InsEagleSyncApp(_BaseWindow):
             self._set_entry(self.setting_entries[key], str(value or ""))
         method, browser_label, profile = get_login_form_values(self.config_data)
         self.selected_default_folder_id = get_config_value(self.config_data, "default_folder_id") or None
+        self.proxy_mode.set(PROXY_VALUE_TO_MODE.get(get_config_value(self.config_data, "proxy_mode"), PROXY_AUTO))
+        detected_proxy = get_config_value(self.config_data, "detected_proxy")
+        self.proxy_detect_result_var.set(
+            f"当前检测结果：已检测到 {detected_proxy}" if detected_proxy else "当前检测结果：未检测"
+        )
+        self._proxy_mode_changed(self.proxy_mode.get())
         self.login_method.set(method)
         self.browser_choice.set(browser_label)
         self.browser_profile_entry.set(profile)
@@ -717,6 +909,21 @@ class InsEagleSyncApp(_BaseWindow):
         path = filedialog.askdirectory(title="选择存储下载文件的父级文件夹")
         if path:
             self._set_storage_parent(path)
+
+    def detect_proxy_now(self) -> None:
+        detected = detect_system_proxy()
+        proxy = (detected or {}).get("http") or (detected or {}).get("https") or ""
+        if proxy:
+            self.proxy_detect_result_var.set(f"当前检测结果：已检测到 {proxy}")
+            self._append_log(f"正常：已检测到系统代理：{proxy}")
+        else:
+            self.proxy_detect_result_var.set("当前检测结果：未检测到系统代理")
+            self._append_log("未检测到系统代理。你可以切换到“手动设置代理”，或选择“不使用代理”。")
+
+    def clear_proxy_fields(self) -> None:
+        self._set_entry(self.setting_entries["http_proxy"], "")
+        self._set_entry(self.setting_entries["https_proxy"], "")
+        self._append_log("代理设置已清空。")
 
     def save_settings(self) -> None:
         try:
@@ -773,8 +980,8 @@ class InsEagleSyncApp(_BaseWindow):
         except ValueError:
             self._append_log("错误：默认最多同步帖子数必须是数字。")
             return None
-        if max_posts <= 0:
-            self._append_log("错误：默认最多同步帖子数必须大于 0。")
+        if max_posts == 0 or max_posts < -1:
+            self._append_log("错误：默认最多同步帖子数必须是 -1 或大于 0 的数字。")
             return None
 
         data = normalize_config_data(self.config_data)
@@ -805,9 +1012,13 @@ class InsEagleSyncApp(_BaseWindow):
                 self._append_log("警告：Instagram 登录 Cookie 文件未设置，部分内容可能需要登录。")
             elif not Path(cookie_file).exists():
                 self._append_log("警告：Instagram 登录 Cookie 文件不存在：<hidden>")
-        data["proxy"]["enabled"] = bool(http_proxy or https_proxy)
-        data["proxy"]["http_proxy"] = http_proxy
-        data["proxy"]["https_proxy"] = https_proxy
+        data = apply_proxy_settings(
+            data,
+            mode_label=self.proxy_mode.get(),
+            http_proxy=http_proxy,
+            https_proxy=https_proxy,
+            detected_result=self.proxy_detect_result_var.get(),
+        )
         data["download"]["max_posts"] = max_posts
         data["download"]["sleep_request"] = sleep_request
         return data
@@ -863,7 +1074,23 @@ class InsEagleSyncApp(_BaseWindow):
 
     def _sync_mode_changed(self, value: str | None = None) -> None:
         mode = value or self.mode.get()
-        self.max_posts_entry.configure(state="normal" if mode == MODE_AUTHOR else "disabled")
+        if mode == MODE_AUTHOR:
+            self.author_options_panel.grid()
+            self._author_range_changed()
+        else:
+            self.author_options_panel.grid_remove()
+
+    def _author_range_changed(self, value: str | None = None) -> None:
+        range_mode = value or self.author_range_choice.get()
+        if range_mode == AUTHOR_SYNC_RECENT:
+            self.recent_posts_frame.grid()
+            self.date_options_frame.grid_remove()
+        elif range_mode == AUTHOR_SYNC_DATE_RANGE:
+            self.recent_posts_frame.grid_remove()
+            self.date_options_frame.grid()
+        else:
+            self.recent_posts_frame.grid_remove()
+            self.date_options_frame.grid_remove()
 
     def _browser_changed(self, value: str | None = None) -> None:
         browser_label = value or self.browser_choice.get()
@@ -884,6 +1111,21 @@ class InsEagleSyncApp(_BaseWindow):
         else:
             self.browser_login_frame.grid_remove()
             self.cookie_file_frame.grid_remove()
+
+    def _proxy_mode_changed(self, value: str | None = None) -> None:
+        mode = value or self.proxy_mode.get()
+        if mode == PROXY_MANUAL:
+            self.proxy_auto_frame.grid_remove()
+            self.proxy_manual_frame.grid()
+            self.proxy_none_frame.grid_remove()
+        elif mode == PROXY_NONE:
+            self.proxy_auto_frame.grid_remove()
+            self.proxy_manual_frame.grid_remove()
+            self.proxy_none_frame.grid()
+        else:
+            self.proxy_auto_frame.grid()
+            self.proxy_manual_frame.grid_remove()
+            self.proxy_none_frame.grid_remove()
 
     def scan_browser_profiles(self) -> None:
         browser_label = self.browser_choice.get()
@@ -1097,9 +1339,19 @@ class InsEagleSyncApp(_BaseWindow):
         self._warn_about_cookies()
         dry_run = True if force_dry_run else self.dry_run_var.get()
         mode = self.mode.get()
-        max_posts = self._read_max_posts() if mode == MODE_AUTHOR else None
-        if max_posts is False:
+        try:
+            normalized_url = detect_instagram_url(url).normalized_url
+        except ValueError as exc:
+            self._append_log(f"错误：{exc}")
             return
+        max_posts: int | None = None
+        date_from: str | None = None
+        date_to: str | None = None
+        if mode == MODE_AUTHOR:
+            author_range = self._read_author_sync_range()
+            if author_range is False:
+                return
+            max_posts, date_from, date_to = author_range
 
         def task() -> dict[str, Any]:
             selected_folder_id = self.selected_folder_id
@@ -1114,8 +1366,15 @@ class InsEagleSyncApp(_BaseWindow):
                 "log": self._queue_log,
             }
             if mode == MODE_AUTHOR:
-                return services.sync_author(self.config, url, max_posts=max_posts, **kwargs)
-            return services.sync_post(self.config, url, **kwargs)
+                return services.sync_author(
+                    self.config,
+                    normalized_url,
+                    max_posts=max_posts,
+                    date_from=date_from,
+                    date_to=date_to,
+                    **kwargs,
+                )
+            return services.sync_post(self.config, normalized_url, **kwargs)
 
         title = "预览" if force_dry_run else "同步"
         self._start_worker(title, task)
@@ -1129,10 +1388,54 @@ class InsEagleSyncApp(_BaseWindow):
         except ValueError:
             self._append_log("错误：最多同步帖子数必须是数字。")
             return False
-        if value <= 0:
-            self._append_log("错误：最多同步帖子数必须大于 0。")
+        if value == 0 or value < -1:
+            self._append_log("错误：最多同步帖子数必须是 -1 或大于 0 的数字。")
             return False
         return value
+
+    def _read_recent_posts_count(self) -> int | bool:
+        raw = self.max_posts_entry.get().strip()
+        try:
+            value = int(raw)
+        except ValueError:
+            self._append_log("错误：最近同步帖子数必须是数字。")
+            return False
+        if value <= 0:
+            self._append_log("错误：最近同步帖子数必须大于 0。")
+            return False
+        return value
+
+    def _read_author_sync_range(self) -> tuple[int | None, str | None, str | None] | bool:
+        range_mode = self.author_range_choice.get() if hasattr(self, "author_range_choice") else AUTHOR_SYNC_UNLIMITED
+        if range_mode == AUTHOR_SYNC_RECENT:
+            max_posts = self._read_recent_posts_count()
+            if max_posts is False:
+                return False
+            return max_posts, None, None
+        if range_mode == AUTHOR_SYNC_DATE_RANGE:
+            date_range = self._read_date_range()
+            if date_range is False:
+                return False
+            date_from, date_to = date_range
+            return -1, date_from, date_to
+        return -1, None, None
+
+    def _read_date_range(self) -> tuple[str, str] | bool:
+        anchor_date = self.anchor_date_entry.get().strip() if hasattr(self, "anchor_date_entry") else today_iso()
+        range_label = self.date_range_choice.get() if hasattr(self, "date_range_choice") else DATE_RANGE_DAY
+        range_amount_text = (
+            self.date_range_amount_entry.get().strip() if hasattr(self, "date_range_amount_entry") else "1"
+        )
+        try:
+            range_amount = int(range_amount_text or "1")
+        except ValueError:
+            self._append_log("错误：时间范围数量必须是数字。")
+            return False
+        try:
+            return author_date_range(anchor_date, range_label, range_amount)
+        except ValueError as exc:
+            self._append_log(f"错误：{exc}")
+            return False
 
     def _target_staging_dir(self) -> Path:
         url = self.url_entry.get().strip()
@@ -1619,6 +1922,16 @@ def normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
         normalized["default_eagle_folder_path"] = data["default_eagle_root_folder"]
     if not normalized.get("default_eagle_root_folder") and normalized.get("default_eagle_folder_path"):
         normalized["default_eagle_root_folder"] = normalized["default_eagle_folder_path"]
+    proxy = normalized.get("proxy", {})
+    source_proxy = data.get("proxy", {}) if isinstance(data.get("proxy", {}), dict) else {}
+    if "mode" not in source_proxy:
+        if source_proxy.get("http_proxy") or source_proxy.get("https_proxy"):
+            proxy["mode"] = "manual"
+        elif "enabled" in source_proxy:
+            proxy["mode"] = "manual" if source_proxy.get("enabled") else "none"
+        else:
+            proxy["mode"] = "auto"
+    proxy["enabled"] = proxy.get("mode") != "none"
     return normalized
 
 
@@ -1651,8 +1964,12 @@ def get_config_value(data: dict[str, Any], key: str) -> Any:
         return data.get("proxy", {}).get("http_proxy") or ""
     if key == "https_proxy":
         return data.get("proxy", {}).get("https_proxy") or ""
+    if key == "proxy_mode":
+        return data.get("proxy", {}).get("mode") or ("manual" if data.get("proxy", {}).get("enabled") else "none")
+    if key == "detected_proxy":
+        return data.get("proxy", {}).get("detected_proxy") or ""
     if key == "max_posts":
-        return data.get("download", {}).get("max_posts", 50)
+        return data.get("download", {}).get("max_posts", -1)
     if key == "sleep_request":
         return data.get("download", {}).get("sleep_request", "8-15")
     raise KeyError(key)
@@ -1693,6 +2010,37 @@ def apply_login_settings(
         cookies["enabled"] = False
         cookies["from_browser"] = ""
         cookies["file"] = ""
+    return updated
+
+
+def apply_proxy_settings(
+    data: dict[str, Any],
+    *,
+    mode_label: str,
+    http_proxy: str,
+    https_proxy: str,
+    detected_result: str = "",
+) -> dict[str, Any]:
+    updated = normalize_config_data(data)
+    proxy = updated["proxy"]
+    mode = PROXY_MODE_TO_VALUE.get(mode_label, "auto")
+    proxy["mode"] = mode
+    if mode == "manual":
+        proxy["enabled"] = True
+        proxy["http_proxy"] = normalize_proxy_url(http_proxy) if http_proxy else ""
+        proxy["https_proxy"] = normalize_proxy_url(https_proxy or http_proxy) if (https_proxy or http_proxy) else ""
+        proxy["detected_proxy"] = ""
+    elif mode == "none":
+        proxy["enabled"] = False
+        proxy["http_proxy"] = ""
+        proxy["https_proxy"] = ""
+        proxy["detected_proxy"] = ""
+    else:
+        proxy["enabled"] = True
+        proxy["http_proxy"] = ""
+        proxy["https_proxy"] = ""
+        prefix = "当前检测结果：已检测到 "
+        proxy["detected_proxy"] = detected_result.removeprefix(prefix) if detected_result.startswith(prefix) else ""
     return updated
 
 
@@ -1881,6 +2229,47 @@ def _safe_int(value: object) -> int:
         return 0
 
 
+def today_iso() -> str:
+    return date.today().isoformat()
+
+
+def author_date_range(anchor_date: str, range_label: str, amount: int = 1) -> tuple[str, str]:
+    text = str(anchor_date or "").strip() or today_iso()
+    try:
+        end_date = date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("时间基准日期必须是 YYYY-MM-DD 格式。") from exc
+    if amount <= 0:
+        raise ValueError("时间范围数量必须大于 0。")
+
+    if range_label == DATE_RANGE_WEEK:
+        start_date = end_date - timedelta(days=(amount * 7) - 1)
+    elif range_label == DATE_RANGE_MONTH:
+        start_date = _shift_months(end_date, -amount) + timedelta(days=1)
+    elif range_label == DATE_RANGE_YEAR:
+        start_date = _shift_months(end_date, -(amount * 12)) + timedelta(days=1)
+    else:
+        start_date = end_date - timedelta(days=amount - 1)
+
+    return start_date.isoformat(), (end_date + timedelta(days=1)).isoformat()
+
+
+def _shift_months(value: date, months: int) -> date:
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, _days_in_month(year, month))
+    return date(year, month, day)
+
+
+def _days_in_month(year: int, month: int) -> int:
+    if month == 12:
+        next_month = date(year + 1, 1, 1)
+    else:
+        next_month = date(year, month + 1, 1)
+    return (next_month - timedelta(days=1)).day
+
+
 def scan_browser_profiles(
     browser_label: str,
     *,
@@ -2034,6 +2423,7 @@ def run_startup_checks(config: AppConfig) -> list[str]:
     else:
         messages.append("警告：Instagram 登录 Cookie 文件不存在：<hidden>")
 
+    messages.append(f"当前代理模式：{proxy_mode_label(getattr(config.proxy, 'mode', 'auto'))}")
     gallery_ok, gallery_message = check_gallery_dl_available(config.gallery_dl_executable)
     messages.append(gallery_message if gallery_ok else f"警告：{gallery_message}")
     return [sanitize_log_message(message, config=config) for message in messages]

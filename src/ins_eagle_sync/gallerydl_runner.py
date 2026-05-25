@@ -1,17 +1,27 @@
 from __future__ import annotations
 
-import os
+import queue
 import shlex
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
 from .config import AppConfig
+from .proxy_utils import build_proxy_env
 from .utils import InstagramMode, detect_instagram_url
 
 
 LogFn = Callable[[str], None]
+NO_OUTPUT_STILL_RUNNING_SECONDS = 60.0
+NO_OUTPUT_STUCK_SECONDS = 120.0
+NO_OUTPUT_POLL_SECONDS = 0.2
+CDN_TIMEOUT_HINT = "Instagram CDN 下载超时，gallery-dl 正在重试，可能与网络或代理有关。"
+STILL_RUNNING_HINT = "下载仍在进行。"
+POSSIBLY_STUCK_HINT = "可能卡住。"
 
 
 @dataclass(frozen=True)
@@ -30,6 +40,8 @@ def build_gallery_dl_request(
     ignore_archive: bool = False,
     verbose: bool = False,
     max_posts: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> GalleryDlRequest:
     info = detect_instagram_url(url)
     target_dir = build_target_dir(config, url)
@@ -45,6 +57,8 @@ def build_gallery_dl_request(
             ignore_archive=ignore_archive,
             verbose=verbose,
             max_posts=max_posts,
+            date_from=date_from,
+            date_to=date_to,
         ),
     )
 
@@ -71,8 +85,15 @@ def build_gallery_dl_command(
     ignore_archive: bool = False,
     verbose: bool = False,
     max_posts: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> list[str]:
+    info = detect_instagram_url(url)
     effective_max_posts = max_posts if max_posts is not None else config.download.max_posts
+    date_from = _optional_date_filter(date_from, "date_from")
+    date_to = _optional_date_filter(date_to, "date_to")
+    if info.mode == InstagramMode.AUTHOR and (effective_max_posts == 0 or effective_max_posts < -1):
+        raise ValueError("max_posts must be -1 or greater than 0")
     command = shlex.split(config.gallery_dl_executable)
     command.append("--config-ignore")
     if verbose:
@@ -81,17 +102,15 @@ def build_gallery_dl_command(
     command.append("--write-metadata")
     if not ignore_archive:
         command.extend(["--download-archive", str(config.archive_db)])
-    command.extend(
-        [
-            "--sleep-request",
-            config.download.sleep_request,
-            "--range",
-            f"1-{effective_max_posts}",
-            "--directory",
-            str(target_dir),
-            url,
-        ]
-    )
+    command.extend(["--sleep-request", config.download.sleep_request])
+    if info.mode == InstagramMode.AUTHOR and effective_max_posts != -1:
+        command.extend(["--range", f"1-{effective_max_posts}"])
+    if info.mode == InstagramMode.AUTHOR:
+        if date_from:
+            command.extend(["--date-after", date_from])
+        if date_to:
+            command.extend(["--date-before", date_to])
+    command.extend(["--directory", str(target_dir), url])
     return command
 
 
@@ -116,6 +135,8 @@ def run_gallery_dl(
     ignore_archive: bool = False,
     verbose: bool = False,
     max_posts: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     log: LogFn = print,
 ) -> subprocess.CompletedProcess[str] | None:
     request = build_gallery_dl_request(
@@ -124,6 +145,8 @@ def run_gallery_dl(
         ignore_archive=ignore_archive,
         verbose=verbose,
         max_posts=max_posts,
+        date_from=date_from,
+        date_to=date_to,
     )
     log_gallery_dl_request(request, dry_run=dry_run, log=log)
 
@@ -137,15 +160,105 @@ def run_gallery_dl(
     request.target_dir.mkdir(parents=True, exist_ok=True)
     config.archive_db.parent.mkdir(parents=True, exist_ok=True)
 
-    result = subprocess.run(
-        request.command,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=build_subprocess_env(config),
-    )
-    log_gallery_dl_result(result, request.target_dir, log=log)
+    env = build_subprocess_env(config)
+    log_proxy_status(config, env=env, log=log)
+    result = run_subprocess_realtime(request.command, env=env, log=log)
+    log_gallery_dl_result(result, request.target_dir, log=log, log_captured_output=False)
     return result
+
+
+def run_subprocess_realtime(
+    command: list[str],
+    *,
+    env: dict[str, str] | None,
+    log: LogFn,
+) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        bufsize=1,
+    )
+    events: queue.Queue[tuple[str, str | None]] = queue.Queue()
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    for stream_name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+        thread = threading.Thread(
+            target=_enqueue_stream_lines,
+            args=(stream_name, stream, events),
+            daemon=True,
+        )
+        thread.start()
+
+    stream_headers_logged: set[str] = set()
+    timeout_hint_logged = False
+    still_running_logged = False
+    stuck_logged = False
+    finished_streams = 0
+    last_output_at = time.monotonic()
+
+    while True:
+        if process.poll() is not None and finished_streams >= 2 and events.empty():
+            break
+
+        try:
+            stream_name, line = events.get(timeout=NO_OUTPUT_POLL_SECONDS)
+        except queue.Empty:
+            if process.poll() is None:
+                now = time.monotonic()
+                silent_for = now - last_output_at
+                if silent_for >= NO_OUTPUT_STUCK_SECONDS and not stuck_logged:
+                    log(POSSIBLY_STUCK_HINT)
+                    stuck_logged = True
+                elif silent_for >= NO_OUTPUT_STILL_RUNNING_SECONDS and not still_running_logged:
+                    log(STILL_RUNNING_HINT)
+                    still_running_logged = True
+            continue
+
+        if line is None:
+            finished_streams += 1
+            continue
+
+        if stream_name == "stdout":
+            stdout_lines.append(line)
+        else:
+            stderr_lines.append(line)
+
+        text = line.rstrip("\r\n")
+        if text:
+            if stream_name not in stream_headers_logged:
+                log(f"gallery-dl {stream_name}:")
+                stream_headers_logged.add(stream_name)
+            log(text)
+            last_output_at = time.monotonic()
+            still_running_logged = False
+            stuck_logged = False
+            if is_network_timeout_warning(text) and not timeout_hint_logged:
+                log(CDN_TIMEOUT_HINT)
+                timeout_hint_logged = True
+
+    returncode = process.wait()
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=returncode,
+        stdout="".join(stdout_lines),
+        stderr="".join(stderr_lines),
+    )
+
+
+def _enqueue_stream_lines(
+    stream_name: str,
+    stream: object,
+    events: queue.Queue[tuple[str, str | None]],
+) -> None:
+    try:
+        if stream is not None:
+            for line in stream:
+                events.put((stream_name, str(line)))
+    finally:
+        events.put((stream_name, None))
 
 
 def validate_cookie_file(
@@ -177,13 +290,36 @@ def validate_cookie_file(
 
 
 def build_subprocess_env(config: AppConfig) -> dict[str, str] | None:
+    mode = getattr(config.proxy, "mode", "manual" if config.proxy.enabled else "none")
+    if mode == "manual" and not config.proxy.http_proxy and not config.proxy.https_proxy:
+        return build_proxy_env(config.proxy)
+    if mode in {"auto", "manual", "none"}:
+        return build_proxy_env(config.proxy)
     if not config.proxy.enabled:
-        return None
+        return build_proxy_env(config.proxy)
 
-    env = os.environ.copy()
-    env["HTTP_PROXY"] = config.proxy.http_proxy or ""
-    env["HTTPS_PROXY"] = config.proxy.https_proxy or ""
-    return env
+    return build_proxy_env(config.proxy)
+
+
+def log_proxy_status(config: AppConfig, *, env: dict[str, str] | None, log: LogFn) -> None:
+    mode = getattr(config.proxy, "mode", "manual" if config.proxy.enabled else "none")
+    http_proxy = (env or {}).get("HTTP_PROXY", "")
+    https_proxy = (env or {}).get("HTTPS_PROXY", "")
+    proxy = http_proxy or https_proxy
+    if mode == "auto":
+        if proxy:
+            log(f"正常：已自动检测到系统代理 {proxy}")
+        else:
+            log("提示：未检测到系统代理，将直接连接网络。")
+    elif mode == "manual":
+        if proxy:
+            if http_proxy and not config.proxy.https_proxy:
+                log("提示：HTTPS 代理为空，已自动使用 HTTP 代理。")
+            log(f"正常：正在使用手动代理 {proxy}")
+        else:
+            log("提示：手动代理未填写，将直接连接网络。")
+    else:
+        log("提示：当前设置为不使用代理。")
 
 
 def log_gallery_dl_request(
@@ -205,17 +341,19 @@ def log_gallery_dl_result(
     target_dir: Path,
     *,
     log: LogFn = print,
+    log_captured_output: bool = True,
 ) -> None:
     log(f"gallery-dl exit code: {result.returncode}")
 
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
-    if stdout:
+    if stdout and log_captured_output:
         log("gallery-dl stdout:")
         log(stdout)
-    if stderr:
+    if stderr and log_captured_output:
         log("gallery-dl stderr:")
         log(stderr)
+    if stderr:
         if is_browser_cookie_error(stderr):
             log(
                 "hint: gallery-dl could not use browser cookies. Chrome may have locked "
@@ -230,6 +368,8 @@ def log_gallery_dl_result(
                 "with cookies.from_browser or cookies.file. This tool runs gallery-dl with "
                 "--config-ignore, so user-level gallery-dl config files are not loaded."
             )
+        if is_network_timeout_warning(stderr):
+            log(CDN_TIMEOUT_HINT)
 
     metadata_files = find_metadata_files(target_dir) if target_dir.exists() else []
     log(f"metadata JSON files found: {len(metadata_files)}")
@@ -252,6 +392,15 @@ def is_browser_cookie_error(stderr: str) -> bool:
             or "dpapi" in text
             or "nonetype" in text
         )
+    )
+
+
+def is_network_timeout_warning(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "read timed out" in lowered
+        or "httpsconnectionpool" in lowered
+        or ("downloader.http" in lowered and "warning" in lowered)
     )
 
 
@@ -287,3 +436,23 @@ def sanitize_command_for_log(command: list[str]) -> list[str]:
 
 def find_metadata_files(staging_dir: Path) -> list[Path]:
     return sorted(staging_dir.rglob("*.json"))
+
+
+def _optional_date_filter(value: str | None, name: str) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if _is_unix_timestamp(text):
+        return text
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            date.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an ISO date, ISO datetime, or Unix timestamp") from exc
+    return text
+
+
+def _is_unix_timestamp(value: str) -> bool:
+    return value.isdigit()

@@ -69,19 +69,20 @@
    }
    ```
 
-7. 如使用 v2rayN，确认代理端口。
+7. 配置代理模式。
 
-   默认示例使用：
+   普通用户建议使用自动检测系统代理。程序会尝试读取环境变量和 Windows 系统代理设置：
 
    ```json
    "proxy": {
-     "enabled": true,
-     "http_proxy": "http://127.0.0.1:10809",
-     "https_proxy": "http://127.0.0.1:10809"
+     "mode": "auto",
+     "http_proxy": "",
+     "https_proxy": "",
+     "detected_proxy": ""
    }
    ```
 
-   运行下载时程序会把 `HTTP_PROXY` 和 `HTTPS_PROXY` 注入给 `gallery-dl` 子进程。
+   如果你知道代理端口，也可以切换到手动设置代理，例如 `http://127.0.0.1:10809` 或 `http://127.0.0.1:7890`。无需代理的网络环境可以选择不使用代理。
 
 ## 配置
 
@@ -103,9 +104,10 @@ Copy-Item config.example.json config.json
   "default_eagle_root_folder": "Instagram",
   "title_caption_chars": 70,
   "proxy": {
-    "enabled": true,
-    "http_proxy": "http://127.0.0.1:10809",
-    "https_proxy": "http://127.0.0.1:10809"
+    "mode": "auto",
+    "http_proxy": "",
+    "https_proxy": "",
+    "detected_proxy": ""
   },
   "cookies": {
     "enabled": true,
@@ -114,7 +116,7 @@ Copy-Item config.example.json config.json
   },
   "download": {
     "sleep_request": "8-15",
-    "max_posts": 50
+    "max_posts": -1
   }
 }
 ```
@@ -127,9 +129,9 @@ Copy-Item config.example.json config.json
 - `imported_state`：Eagle 导入状态文件，用于避免重复导入
 - `eagle_api_base`：Eagle Local API 地址
 - `title_caption_chars`：Eagle 标题使用 caption 前多少个可见字符
-- `proxy`：给 `gallery-dl` 子进程注入代理环境变量
+- `proxy`：代理模式。`auto` 自动检测系统代理，`manual` 使用手动代理，`none` 不使用代理
 - `cookies`：Instagram 登录 cookies
-- `download.max_posts`：作者同步时最多下载多少条
+- `download.max_posts`：作者同步时最多下载多少条。`50` 表示最多抓取 50 条，`-1` 表示不限制数量
 
 ## 单帖同步
 
@@ -179,6 +181,14 @@ py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --fo
 py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID" --max-posts 20
 ```
 
+不限制同步数量：
+
+```powershell
+py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID" --max-posts -1
+```
+
+`-1` 会抓取所有可访问内容，可能耗时较长，也更容易触发平台限制。首次使用建议先用较小数字测试。
+
 带 Eagle 状态校验：
 
 ```powershell
@@ -219,7 +229,7 @@ Instagram
 Instagram/quinn.xyz
 ```
 
-`sync-post`、`sync-author`、`import-staging` 都支持：
+`sync-post`、`sync-author`、`import-staging`、`verify-imports` 都支持：
 
 - `--folder-id`
 - `--folder-path`
@@ -294,6 +304,12 @@ dry-run：
 py -m ins_eagle_sync.cli verify-imports --shortcode DYld7hQCT90 --folder-id "YOUR_EAGLE_FOLDER_ID" --dry-run
 ```
 
+也可以使用 Eagle 文件夹路径，程序会先解析为 folder id 再做 folder-aware 校验：
+
+```powershell
+py -m ins_eagle_sync.cli verify-imports --shortcode DYld7hQCT90 --folder-path "Instagram/quinn.xyz" --dry-run
+```
+
 实际删除 stale state：
 
 ```powershell
@@ -361,6 +377,7 @@ py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --fo
 
 ```powershell
 py -m ins_eagle_sync.cli verify-imports --shortcode DYld7hQCT90 --folder-id "YOUR_EAGLE_FOLDER_ID" --dry-run
+py -m ins_eagle_sync.cli verify-imports --shortcode DYld7hQCT90 --folder-path "Instagram/quinn.xyz" --dry-run
 py -m ins_eagle_sync.cli import-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7hQCT90" --folder-id "YOUR_EAGLE_FOLDER_ID" --verify-eagle
 ```
 
@@ -388,9 +405,20 @@ HTTP redirect to login page
 }
 ```
 
-### v2rayN 代理不生效
+### 代理不生效
 
-确认 `config.json` 中代理端口和 v2rayN 本地监听端口一致。常见端口是 `10809`，但请以你的 v2rayN 设置为准。
+GUI 设置页提供三种代理模式：
+
+- 自动检测系统代理：推荐给普通用户，会尝试读取系统代理或环境变量。
+- 手动设置代理：适合知道代理端口的用户，例如 `http://127.0.0.1:10809` 或 `http://127.0.0.1:7890`。如果只填写 HTTP 代理，程序会自动同时用于 HTTPS。
+- 不使用代理：适合无需代理的网络环境，程序会尽量清除传给子进程的代理环境变量。
+
+如果下载失败，可以尝试：
+
+- 检查代理软件是否开启。
+- 切换到手动设置代理，并确认端口和代理软件一致。
+- 清空代理或选择不使用代理后重试。
+- 检查 cookies 是否有效。
 
 ## 不要提交这些文件
 
