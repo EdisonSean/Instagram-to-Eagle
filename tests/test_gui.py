@@ -4,14 +4,18 @@ from unittest.mock import patch
 
 from ins_eagle_sync import gui
 from ins_eagle_sync.config import load_config
+from ins_eagle_sync.ui_theme import APP_TITLE, COLORS
 
 
 def test_gui_module_exposes_main() -> None:
     assert callable(gui.main)
+    assert APP_TITLE == "Instagram to Eagle"
+    assert COLORS["primary"]
     assert gui.MODE_POST == "单个帖子"
     assert gui.MODE_AUTHOR == "作者主页"
     assert gui.STATUS_READY == "就绪"
     assert gui.STATUS_RUNNING == "运行中"
+    assert gui.LOG_PANEL_TITLE == "运行日志"
 
 
 def test_resolve_config_path_falls_back_to_example(monkeypatch, project_tmp_path) -> None:
@@ -51,6 +55,30 @@ def test_write_config_data_can_be_reloaded(project_tmp_path) -> None:
     assert loaded_data["eagle_api_base"] == "http://localhost:41596"
     assert loaded_config.default_eagle_root_folder == "Instagram/quinn.xyz"
     assert loaded_config.download.max_posts == 12
+
+
+def test_storage_parent_derives_runtime_paths(project_tmp_path) -> None:
+    parent = project_tmp_path / "workspace"
+
+    data = gui.apply_storage_parent(gui.default_config_data(), parent)
+
+    assert data[gui.STORAGE_PARENT_KEY] == str(parent)
+    assert data["staging_dir"] == str(parent / "_staging")
+    assert data["archive_db"] == str(parent / "_cache" / "gallery-dl-archive.sqlite3")
+    assert data["imported_state"] == str(parent / "_cache" / "eagle-imported.json")
+
+
+def test_storage_parent_config_can_be_loaded(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    parent = project_tmp_path / "workspace"
+    data = gui.apply_storage_parent(gui.default_config_data(), parent)
+
+    gui.write_config_data(data, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.staging_dir == parent / "_staging"
+    assert loaded.archive_db == parent / "_cache" / "gallery-dl-archive.sqlite3"
+    assert loaded.imported_state == parent / "_cache" / "eagle-imported.json"
 
 
 def test_browser_login_settings_write_from_browser(project_tmp_path) -> None:
@@ -298,3 +326,9 @@ def test_gallery_dl_check_failure_is_nonfatal() -> None:
 
     assert ok is False
     assert "gallery-dl 不可用" in message
+
+
+def test_log_message_classification() -> None:
+    assert gui.classify_log_message("正常：ready") == "ok"
+    assert gui.classify_log_message("警告：check cookies") == "warning"
+    assert gui.classify_log_message("错误：failed") == "error"
