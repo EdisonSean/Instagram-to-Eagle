@@ -39,6 +39,14 @@ def test_run_dry_run_invokes_gallerydl_runner_with_normalized_url():
     assert run_mock.call_args.kwargs["dry_run"] is True
 
 
+def test_gui_command_opens_gui_without_loading_cli_config():
+    with patch("ins_eagle_sync.gui.main") as gui_main:
+        exit_code = main(["gui"])
+
+    assert exit_code == 0
+    gui_main.assert_called_once_with()
+
+
 def test_parse_staging_prints_import_item_summary(project_tmp_path, capsys):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)

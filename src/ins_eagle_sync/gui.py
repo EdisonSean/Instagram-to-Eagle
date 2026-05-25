@@ -76,6 +76,12 @@ FOLDER_DISPLAY_ICON = "📁"
 FOLDER_ROW_HEIGHT = 34
 FOLDER_INDENT = 24
 FOLDER_ARROW_WIDTH = 34
+LOG_FLUSH_INTERVAL_MS = 75
+MAX_LOG_LINES = 5000
+LOG_BATCH_LIMIT = 300
+FOLDER_SEARCH_DEBOUNCE_MS = 200
+TREE_RENDER_BUFFER_ROWS = 4
+MAIN_SCROLL_UNITS_PER_WHEEL = 75
 
 DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "gallery_dl_executable": "py -m gallery_dl",
@@ -119,6 +125,7 @@ class InsEagleSyncApp(_BaseWindow):
         self.configure(fg_color=COLORS["window"])
 
         self.log_queue: queue.Queue[str] = queue.Queue()
+        self.log_line_count = 0
         self.log_panel_visible = True
         self.worker: threading.Thread | None = None
         self.setting_entries: dict[str, Any] = {}
@@ -139,7 +146,7 @@ class InsEagleSyncApp(_BaseWindow):
 
         self._build_layout()
         self._set_default_values()
-        self.after(100, self._drain_log_queue)
+        self.after(LOG_FLUSH_INTERVAL_MS, self._drain_log_queue)
         self.after(250, self.startup_checks)
 
     def _build_layout(self) -> None:
@@ -171,9 +178,12 @@ class InsEagleSyncApp(_BaseWindow):
         for frame in (self.sync_tab, self.settings_tab):
             frame.grid(row=0, column=0, sticky="nsew")
             frame.grid_columnconfigure(0, weight=1)
+            self._bind_scrollable_frame_mousewheel(frame)
 
         self._build_sync_tab(self.sync_tab)
         self._build_settings_tab(self.settings_tab)
+        self._bind_scrollable_frame_mousewheel(self.sync_tab)
+        self._bind_scrollable_frame_mousewheel(self.settings_tab)
         self._show_main_tab(SYNC_TAB_NAME)
         self._build_log_panel()
 
@@ -231,6 +241,36 @@ class InsEagleSyncApp(_BaseWindow):
         )
         self.nav_tabs.grid(row=0, column=1, pady=12)
         self.nav_tabs.set(SYNC_TAB_NAME)
+
+    def _bind_scrollable_frame_mousewheel(self, frame: Any) -> None:
+        canvas = getattr(frame, "_parent_canvas", None)
+        if canvas is None:
+            return
+
+        def scroll(event: object) -> str:
+            delta = getattr(event, "delta", 0)
+            if delta:
+                canvas.yview_scroll(int(-1 * (delta / 120)) * MAIN_SCROLL_UNITS_PER_WHEEL, "units")
+            return "break"
+
+        self._bind_mousewheel_to_widget(frame, scroll)
+        self._bind_mousewheel_to_widget(canvas, scroll)
+        self._bind_mousewheel_to_children(frame, scroll)
+
+    def _bind_mousewheel_to_widget(self, widget: Any, callback: Callable[[object], str]) -> None:
+        try:
+            widget.bind("<MouseWheel>", callback)
+        except Exception:  # noqa: BLE001 - CustomTkinter internals can vary.
+            return
+
+    def _bind_mousewheel_to_children(self, widget: Any, callback: Callable[[object], str]) -> None:
+        try:
+            children = widget.winfo_children()
+        except Exception:  # noqa: BLE001 - test doubles or alternate widgets may not expose children.
+            return
+        for child in children:
+            self._bind_mousewheel_to_widget(child, callback)
+            self._bind_mousewheel_to_children(child, callback)
 
     def _show_main_tab(self, value: str) -> None:
         if value == SETTINGS_TAB_NAME:
@@ -360,6 +400,19 @@ class InsEagleSyncApp(_BaseWindow):
         )
         self.log_text.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 14))
         self._configure_log_tags()
+        self._bind_local_mousewheel(self.log_text)
+
+    def _bind_local_mousewheel(self, widget: Any) -> None:
+        def scroll(event: object) -> str:
+            delta = getattr(event, "delta", 0)
+            if delta:
+                widget.yview_scroll(int(-1 * (delta / 120)), "units")
+            return "break"
+
+        try:
+            widget.bind("<MouseWheel>", scroll)
+        except Exception:  # noqa: BLE001 - alternate widgets may not support bind.
+            return
 
     def _build_sync_tab(self, parent: Any) -> None:
         parent.grid_columnconfigure(0, weight=1)
@@ -1183,6 +1236,7 @@ class InsEagleSyncApp(_BaseWindow):
 
     def clear_log(self) -> None:
         self.log_text.delete("1.0", "end")
+        self.log_line_count = 0
 
     def copy_log(self) -> None:
         try:
@@ -1516,6 +1570,7 @@ class InsEagleSyncApp(_BaseWindow):
             self.log_queue.put(FRIENDLY_LOGIN_FAILURE_HINT)
 
     def _drain_log_queue(self) -> None:
+        log_messages: list[str] = []
         while True:
             try:
                 message = self.log_queue.get_nowait()
@@ -1529,18 +1584,50 @@ class InsEagleSyncApp(_BaseWindow):
                 self._set_controls_enabled(True)
                 self._set_status(STATUS_FAILED)
             else:
-                self._append_log(message)
+                log_messages.append(message)
+                if len(log_messages) >= LOG_BATCH_LIMIT:
+                    break
 
-        self.after(100, self._drain_log_queue)
+        if log_messages:
+            self._append_log_batch(log_messages)
+
+        self.after(LOG_FLUSH_INTERVAL_MS, self._drain_log_queue)
 
     def _append_log(self, message: object) -> None:
-        text = self._sanitize_log_message(message)
-        tag = classify_log_message(text)
+        self._append_log_batch([self._sanitize_log_message(message)])
+
+    def _append_log_batch(self, messages: list[object]) -> None:
+        inserted = 0
+        should_scroll = self._log_is_at_bottom()
+        for message in messages:
+            text = self._sanitize_log_message(message)
+            tag = classify_log_message(text)
+            inserted += text.count("\n") + 1
+            try:
+                self.log_text.insert("end", text + "\n", tag)
+            except Exception:  # noqa: BLE001 - fallback for alternate CTkTextbox implementations.
+                self.log_text.insert("end", text + "\n")
+        self.log_line_count += inserted
+        self._trim_log_lines()
+        if should_scroll:
+            self.log_text.see("end")
+
+    def _log_is_at_bottom(self) -> bool:
         try:
-            self.log_text.insert("end", text + "\n", tag)
-        except Exception:  # noqa: BLE001 - fallback for alternate CTkTextbox implementations.
-            self.log_text.insert("end", text + "\n")
-        self.log_text.see("end")
+            _first, last = self.log_text.yview()
+        except Exception:  # noqa: BLE001 - alternate text widgets may not expose yview.
+            return True
+        return float(last) >= 0.98
+
+    def _trim_log_lines(self) -> None:
+        overflow = self.log_line_count - MAX_LOG_LINES
+        if overflow <= 0:
+            return
+        try:
+            self.log_text.delete("1.0", f"{overflow + 1}.0")
+            self.log_line_count -= overflow
+        except Exception:  # noqa: BLE001 - keep logging functional if trimming is unsupported.
+            self.log_line_count = MAX_LOG_LINES
 
     def _sanitize_log_message(self, message: object) -> str:
         return sanitize_log_message(message, config_data=self.config_data, config=self.config)
@@ -1665,7 +1752,7 @@ class EagleFolderPickerDialog:
         self.tree_scrollbar = tk.Scrollbar(
             self.list_frame,
             orient="vertical",
-            command=self.tree_canvas.yview,
+            command=self._tree_yview,
             width=14,
             bg=COLORS["surface_2"],
             troughcolor=COLORS["surface"],
@@ -1741,7 +1828,7 @@ class EagleFolderPickerDialog:
     def _schedule_render(self, _event: object | None = None) -> None:
         if self.search_after_id is not None:
             self.window.after_cancel(self.search_after_id)
-        self.search_after_id = self.window.after(180, self._render_tree)
+        self.search_after_id = self.window.after(FOLDER_SEARCH_DEBOUNCE_MS, self._render_tree)
 
     def _render_tree(self) -> None:
         self.search_after_id = None
@@ -1778,8 +1865,18 @@ class EagleFolderPickerDialog:
         total_height = max(len(self.visible_rows) * FOLDER_ROW_HEIGHT, self.tree_canvas.winfo_height())
         self.tree_canvas.configure(scrollregion=(0, 0, width, total_height))
 
-        for index, row in enumerate(self.visible_rows):
+        start_index, end_index = self._visible_tree_index_range()
+        for index in range(start_index, end_index):
+            row = self.visible_rows[index]
             self._draw_tree_row(index, row, width)
+
+    def _visible_tree_index_range(self) -> tuple[int, int]:
+        if not self.visible_rows:
+            return 0, 0
+        top = max(0, int(self.tree_canvas.canvasy(0) // FOLDER_ROW_HEIGHT) - TREE_RENDER_BUFFER_ROWS)
+        visible_count = int(self.tree_canvas.winfo_height() // FOLDER_ROW_HEIGHT) + (TREE_RENDER_BUFFER_ROWS * 2) + 2
+        bottom = min(len(self.visible_rows), top + visible_count)
+        return top, bottom
 
     def _draw_tree_row(self, index: int, row: dict[str, Any], width: int) -> None:
         folder = row["folder"]
@@ -1876,7 +1973,12 @@ class EagleFolderPickerDialog:
         delta = getattr(event, "delta", 0)
         if delta:
             self.tree_canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+            self._draw_tree()
         return "break"
+
+    def _tree_yview(self, *args: object) -> None:
+        self.tree_canvas.yview(*args)
+        self._draw_tree()
 
     def _clear_tree(self) -> None:
         self.visible_rows = []

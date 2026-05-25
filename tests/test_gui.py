@@ -1,3 +1,4 @@
+import queue
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -44,6 +45,105 @@ class FakeFrame:
 
     def grid_propagate(self, value) -> None:
         self.propagate = bool(value)
+
+
+class FakeTextBox:
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.seen: list[str] = []
+        self.yview_value = (0.0, 1.0)
+
+    def insert(self, index, value, tag=None) -> None:
+        self.lines.extend(value.splitlines())
+
+    def delete(self, start, end) -> None:
+        self.deleted.append((start, end))
+        if start == "1.0" and end.endswith(".0"):
+            count = int(end.split(".", 1)[0]) - 1
+            del self.lines[:count]
+        elif start == "1.0" and end == "end":
+            self.lines.clear()
+
+    def see(self, index) -> None:
+        self.seen.append(index)
+
+    def yview(self):
+        return self.yview_value
+
+
+class FakeCanvas:
+    def __init__(self, *, height=102, width=320, y=0) -> None:
+        self.height = height
+        self.width = width
+        self.y = y
+        self.rectangles: list[tuple] = []
+        self.texts: list[tuple] = []
+        self.ovals: list[tuple] = []
+        self.scrollregion = None
+        self.scroll_calls: list[tuple[int, str]] = []
+        self.bindings = {}
+
+    def delete(self, target) -> None:
+        self.rectangles.clear()
+        self.texts.clear()
+        self.ovals.clear()
+
+    def winfo_width(self):
+        return self.width
+
+    def winfo_height(self):
+        return self.height
+
+    def configure(self, **kwargs) -> None:
+        if "scrollregion" in kwargs:
+            self.scrollregion = kwargs["scrollregion"]
+
+    def canvasy(self, y):
+        return self.y + y
+
+    def create_rectangle(self, *args, **kwargs):
+        self.rectangles.append((args, kwargs))
+
+    def create_text(self, *args, **kwargs):
+        self.texts.append((args, kwargs))
+
+    def create_oval(self, *args, **kwargs):
+        self.ovals.append((args, kwargs))
+
+    def yview_scroll(self, amount, units):
+        self.scroll_calls.append((amount, units))
+
+    def yview(self, *args):
+        return None
+
+    def bind(self, event, callback) -> None:
+        self.bindings[event] = callback
+
+
+class FakeWidget:
+    def __init__(self, children=None) -> None:
+        self.bindings = {}
+        self.children = list(children or [])
+
+    def bind(self, event, callback) -> None:
+        self.bindings[event] = callback
+
+    def winfo_children(self):
+        return self.children
+
+
+class FakeScrollableFrame:
+    def __init__(self, children=None) -> None:
+        self._parent_canvas = FakeCanvas()
+        self.bindings = {}
+        self.children = list(children or [])
+
+    def bind(self, event, callback) -> None:
+        self.bindings[event] = callback
+
+    def winfo_children(self):
+        return self.children
 
 
 def test_gui_module_exposes_main() -> None:
@@ -543,6 +643,74 @@ def test_log_message_classification() -> None:
     assert gui.classify_log_message("正常：ready") == "ok"
     assert gui.classify_log_message("警告：check cookies") == "warning"
     assert gui.classify_log_message("错误：failed") == "error"
+
+
+def test_log_queue_flushes_in_batches_and_trims() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.log_queue = queue.Queue()
+    app.log_text = FakeTextBox()
+    app.log_line_count = gui.MAX_LOG_LINES - 1
+    app.config_data = gui.default_config_data()
+    app.config = None
+    after_calls = []
+    app.after = lambda delay, callback: after_calls.append((delay, callback))
+    app._set_controls_enabled = lambda _enabled: None
+    app._set_status = lambda _status: None
+
+    for index in range(3):
+        app.log_queue.put(f"line {index}")
+
+    gui.InsEagleSyncApp._drain_log_queue(app)
+
+    assert app.log_text.lines == ["line 2"]
+    assert app.log_line_count == gui.MAX_LOG_LINES
+    assert app.log_text.deleted
+    assert after_calls[0][0] == gui.LOG_FLUSH_INTERVAL_MS
+
+
+def test_main_scrollable_frame_mousewheel_uses_larger_step() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    frame = FakeScrollableFrame()
+
+    gui.InsEagleSyncApp._bind_scrollable_frame_mousewheel(app, frame)
+    result = frame.bindings["<MouseWheel>"](SimpleNamespace(delta=-120))
+
+    assert result == "break"
+    assert frame._parent_canvas.scroll_calls == [(gui.MAIN_SCROLL_UNITS_PER_WHEEL, "units")]
+
+
+def test_main_scrollable_frame_child_mousewheel_uses_same_step() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    child = FakeWidget()
+    frame = FakeScrollableFrame(children=[FakeWidget(children=[child])])
+
+    gui.InsEagleSyncApp._bind_scrollable_frame_mousewheel(app, frame)
+    result = child.bindings["<MouseWheel>"](SimpleNamespace(delta=-120))
+
+    assert result == "break"
+    assert frame._parent_canvas.scroll_calls == [(gui.MAIN_SCROLL_UNITS_PER_WHEEL, "units")]
+
+
+def test_folder_picker_search_debounce_is_200ms() -> None:
+    assert gui.FOLDER_SEARCH_DEBOUNCE_MS == 200
+
+
+def test_folder_picker_draw_tree_only_draws_visible_rows() -> None:
+    dialog = object.__new__(gui.EagleFolderPickerDialog)
+    dialog.tree_canvas = FakeCanvas(height=gui.FOLDER_ROW_HEIGHT * 3, y=gui.FOLDER_ROW_HEIGHT * 50)
+    dialog.visible_rows = [
+        {"folder": {"id": f"folder-{index}", "name": f"Folder {index}", "path": f"Folder {index}"}, "depth": 0}
+        for index in range(100)
+    ]
+    dialog.selected_folder = None
+    dialog.hover_row_index = None
+    dialog.children_by_parent = {}
+    dialog.expanded_folder_ids = set()
+
+    gui.EagleFolderPickerDialog._draw_tree(dialog)
+
+    assert len(dialog.tree_canvas.rectangles) < len(dialog.visible_rows)
+    assert len(dialog.tree_canvas.rectangles) <= 13
 
 
 def test_folder_picker_rows_support_tree_and_search() -> None:

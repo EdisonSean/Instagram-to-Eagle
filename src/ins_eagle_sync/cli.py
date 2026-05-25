@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     detect_parser = subparsers.add_parser("detect", help="Detect Instagram URL mode.")
     detect_parser.add_argument("url")
 
+    subparsers.add_parser("gui", help="Open the graphical interface.")
+
     run_parser = subparsers.add_parser("run", help="Run gallery-dl for an author, post, or reel URL.")
     run_parser.add_argument("url")
     run_parser.add_argument("--dry-run", action="store_true", help="Print the gallery-dl command without running it.")
@@ -112,6 +114,12 @@ def main(argv: list[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.command == "gui":
+        from .gui import main as gui_main
+
+        gui_main()
         return 0
 
     if args.command == "parse-staging":

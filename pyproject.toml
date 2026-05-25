@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 ins-eagle-sync = "ins_eagle_sync.cli:main"
+ins-eagle-sync-gui = "ins_eagle_sync.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
