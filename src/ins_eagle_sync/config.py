@@ -38,6 +38,10 @@ class AppConfig:
     proxy: ProxyConfig
     download: DownloadConfig
     cookies: CookiesConfig
+    default_eagle_folder_path: str = ""
+    default_eagle_folder_id: str | None = None
+    last_eagle_folder_path: str = ""
+    last_eagle_folder_id: str | None = None
 
 
 def load_config(path: str | Path) -> AppConfig:
@@ -50,6 +54,11 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     proxy_data = data.get("proxy", {})
     download_data = data.get("download", {})
     cookies_data = data.get("cookies", {})
+    default_folder_path = str(
+        data.get("default_eagle_folder_path")
+        or data.get("default_eagle_root_folder")
+        or ""
+    )
 
     return AppConfig(
         gallery_dl_executable=str(data["gallery_dl_executable"]),
@@ -57,7 +66,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         archive_db=Path(data["archive_db"]).expanduser(),
         imported_state=Path(data["imported_state"]).expanduser(),
         eagle_api_base=str(data["eagle_api_base"]).rstrip("/"),
-        default_eagle_root_folder=str(data["default_eagle_root_folder"]),
+        default_eagle_root_folder=str(data.get("default_eagle_root_folder") or default_folder_path),
         title_caption_chars=int(data.get("title_caption_chars", 70)),
         proxy=ProxyConfig(
             enabled=bool(proxy_data.get("enabled", False)),
@@ -73,6 +82,10 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             from_browser=_optional_text(cookies_data.get("from_browser")),
             file=_optional_path(cookies_data.get("file")),
         ),
+        default_eagle_folder_path=default_folder_path,
+        default_eagle_folder_id=_optional_text(data.get("default_eagle_folder_id")),
+        last_eagle_folder_path=str(data.get("last_eagle_folder_path") or ""),
+        last_eagle_folder_id=_optional_text(data.get("last_eagle_folder_id")),
     )
 
 

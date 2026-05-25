@@ -5,6 +5,10 @@
   "imported_state": "E:/INS_Eagle_Sync/_cache/eagle-imported.json",
   "eagle_api_base": "http://localhost:41595",
   "default_eagle_root_folder": "Instagram",
+  "default_eagle_folder_path": "Instagram",
+  "default_eagle_folder_id": "",
+  "last_eagle_folder_path": "",
+  "last_eagle_folder_id": "",
   "title_caption_chars": 70,
   "proxy": {
     "enabled": true,

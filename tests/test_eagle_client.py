@@ -70,10 +70,38 @@ def test_list_folders_flattens_nested_folder_tree():
         folders = EagleClient("http://localhost:41595").list_folders()
 
     get_mock.assert_called_once_with("http://localhost:41595/api/folder/list", timeout=10)
-    assert folders == [
-        {"id": "root-1", "name": "Instagram", "parent_id": None, "path": "Instagram"},
-        {"id": "child-1", "name": "quinn.xyz", "parent_id": "root-1", "path": "Instagram/quinn.xyz"},
+    assert folders[0]["id"] == "root-1"
+    assert folders[0]["parent_id"] is None
+    assert folders[0]["path"] == "Instagram"
+    assert folders[1]["id"] == "child-1"
+    assert folders[1]["parent_id"] == "root-1"
+    assert folders[1]["path"] == "Instagram/quinn.xyz"
+    assert folders[0]["children"][0]["id"] == "child-1"
+
+
+def test_list_folders_builds_paths_from_flat_parent_structure():
+    response = make_response(
+        payload={
+            "status": "success",
+            "data": [
+                {"id": "root-1", "name": "Instagram", "iconColor": "#ff0000", "imageCount": 3},
+                {"id": "child-1", "name": "quinn.xyz", "parentId": "root-1", "descendantImageCount": 7},
+                {"id": "child-2", "name": "reels", "parent": {"id": "child-1"}},
+            ],
+        }
+    )
+
+    with patch("ins_eagle_sync.eagle_client.requests.get", return_value=response):
+        folders = EagleClient("http://localhost:41595").list_folders()
+
+    assert [folder["path"] for folder in folders] == [
+        "Instagram",
+        "Instagram/quinn.xyz",
+        "Instagram/quinn.xyz/reels",
     ]
+    assert folders[0]["icon_color"] == "#ff0000"
+    assert folders[0]["image_count"] == 3
+    assert folders[1]["descendant_image_count"] == 7
 
 
 def test_ensure_folder_path_reuses_existing_nested_folder():

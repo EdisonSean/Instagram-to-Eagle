@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import threading
 import traceback
+import tkinter as tk
 import webbrowser
 from copy import deepcopy
 from pathlib import Path
@@ -54,6 +55,10 @@ STATUS_RUNNING = "运行中"
 STATUS_DONE = "完成"
 STATUS_FAILED = "失败"
 LOG_PANEL_TITLE = "运行日志"
+FOLDER_DISPLAY_ICON = "📁"
+FOLDER_ROW_HEIGHT = 34
+FOLDER_INDENT = 24
+FOLDER_ARROW_WIDTH = 34
 
 DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "gallery_dl_executable": "py -m gallery_dl",
@@ -63,6 +68,10 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "imported_state": "E:/INS_Eagle_Sync/_cache/eagle-imported.json",
     "eagle_api_base": "http://localhost:41595",
     "default_eagle_root_folder": DEFAULT_FOLDER_PATH,
+    "default_eagle_folder_path": DEFAULT_FOLDER_PATH,
+    "default_eagle_folder_id": "",
+    "last_eagle_folder_path": "",
+    "last_eagle_folder_id": "",
     "title_caption_chars": 70,
     "proxy": {
         "enabled": True,
@@ -96,6 +105,8 @@ class InsEagleSyncApp(_BaseWindow):
         self.worker: threading.Thread | None = None
         self.setting_entries: dict[str, Any] = {}
         self.status_var = ctk.StringVar(value=STATUS_READY)
+        self.selected_folder_id: str | None = None
+        self.selected_default_folder_id: str | None = None
         self.storage_preview_vars = {
             "staging_dir": ctk.StringVar(value="未设置"),
             "archive_db": ctk.StringVar(value="未设置"),
@@ -332,10 +343,6 @@ class InsEagleSyncApp(_BaseWindow):
     def _build_sync_tab(self, parent: Any) -> None:
         parent.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(parent, text="Instagram → Eagle 同步工具", text_color=COLORS["text"], font=FONTS["page_title"]).grid(
-            row=0, column=0, padx=SPACE["lg"], pady=(SPACE["xl"], SPACE["lg"]), sticky="w"
-        )
-
         source = self._card(parent, 1, "1. 来源", "⌁", columns=4)
         source.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(source, text="Instagram 链接", text_color=COLORS["text"], font=FONTS["label"]).grid(
@@ -375,7 +382,14 @@ class InsEagleSyncApp(_BaseWindow):
         )
         self.folder_path_entry = self._entry(destination, placeholder="例如：Instagram/quinn.xyz")
         self.folder_path_entry.grid(row=1, column=1, padx=(0, SPACE["sm"]), pady=(0, SPACE["lg"]), sticky="ew")
-        self.browse_folder_button = self._button(destination, "浏览", self.ensure_folder, kind="secondary", width=84)
+        self.folder_path_entry.bind("<KeyRelease>", self._sync_folder_path_changed)
+        self.browse_folder_button = self._button(
+            destination,
+            "选择 Eagle 文件夹",
+            self.choose_sync_eagle_folder,
+            kind="secondary",
+            width=136,
+        )
         self.browse_folder_button.grid(row=1, column=2, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]))
 
         self.verify_var = ctk.BooleanVar(value=True)
@@ -562,7 +576,15 @@ class InsEagleSyncApp(_BaseWindow):
             connect_card.grid_columnconfigure(column, weight=1)
         self._add_compact_field(connect_card, 1, 0, "Eagle 本地 API 地址", "eagle_api_base")
         self._add_compact_field(connect_card, 1, 2, "HTTPS 代理", "https_proxy")
-        self._add_compact_field(connect_card, 2, 0, "默认 Eagle 导入位置", "default_folder_path")
+        self._add_compact_field(
+            connect_card,
+            2,
+            0,
+            "默认 Eagle 导入位置",
+            "default_folder_path",
+            button_text="选择",
+            button_command=self.choose_default_eagle_folder,
+        )
         self._add_compact_field(connect_card, 2, 2, "默认最多同步帖子数", "max_posts")
         self._add_compact_field(connect_card, 3, 0, "HTTP 代理", "http_proxy")
         self._add_compact_field(connect_card, 3, 2, "请求间隔", "sleep_request")
@@ -593,13 +615,33 @@ class InsEagleSyncApp(_BaseWindow):
             button = self._button(parent, button_text, button_command, width=108)
             button.grid(row=row, column=2, padx=(SPACE["sm"], SPACE["lg"]), pady=SPACE["sm"], sticky="e")
 
-    def _add_compact_field(self, parent: Any, row: int, column: int, label: str, key: str) -> None:
+    def _add_compact_field(
+        self,
+        parent: Any,
+        row: int,
+        column: int,
+        label: str,
+        key: str,
+        *,
+        button_text: str | None = None,
+        button_command: Callable[[], None] | None = None,
+    ) -> None:
         ctk.CTkLabel(parent, text=label, text_color=COLORS["text"], font=FONTS["label"]).grid(
             row=row, column=column, padx=(SPACE["lg"], SPACE["sm"]), pady=SPACE["sm"], sticky="w"
         )
-        entry = self._entry(parent)
-        entry.grid(row=row, column=column + 1, padx=(0, SPACE["lg"]), pady=SPACE["sm"], sticky="ew")
+        if button_text and button_command:
+            field = ctk.CTkFrame(parent, fg_color="transparent")
+            field.grid(row=row, column=column + 1, padx=(0, SPACE["lg"]), pady=SPACE["sm"], sticky="ew")
+            field.grid_columnconfigure(0, weight=1)
+            entry = self._entry(field)
+            entry.grid(row=0, column=0, padx=(0, SPACE["sm"]), sticky="ew")
+            self._button(field, button_text, button_command, width=72).grid(row=0, column=1, sticky="e")
+        else:
+            entry = self._entry(parent)
+            entry.grid(row=row, column=column + 1, padx=(0, SPACE["lg"]), pady=SPACE["sm"], sticky="ew")
         self.setting_entries[key] = entry
+        if key == "default_folder_path":
+            entry.bind("<KeyRelease>", self._default_folder_path_changed)
 
     def _add_storage_preview(self, parent: Any, row: int) -> None:
         frame = ctk.CTkFrame(parent, corner_radius=RADIUS["control"], fg_color=COLORS["surface_2"])
@@ -626,7 +668,10 @@ class InsEagleSyncApp(_BaseWindow):
 
     def _set_default_values(self) -> None:
         self.mode.set(MODE_POST)
-        self._set_entry(self.folder_path_entry, get_config_value(self.config_data, "default_folder_path"))
+        sync_folder = get_last_or_default_folder(self.config_data)
+        self.selected_folder_id = sync_folder["folder_id"] or None
+        self.selected_default_folder_id = get_config_value(self.config_data, "default_folder_id") or None
+        self._set_entry(self.folder_path_entry, sync_folder["folder_path"])
         self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
         self._populate_settings_form()
         self._sync_mode_changed(MODE_POST)
@@ -651,6 +696,7 @@ class InsEagleSyncApp(_BaseWindow):
         for key, value in values.items():
             self._set_entry(self.setting_entries[key], str(value or ""))
         method, browser_label, profile = get_login_form_values(self.config_data)
+        self.selected_default_folder_id = get_config_value(self.config_data, "default_folder_id") or None
         self.login_method.set(method)
         self.browser_choice.set(browser_label)
         self.browser_profile_entry.set(profile)
@@ -682,7 +728,9 @@ class InsEagleSyncApp(_BaseWindow):
             self.config_data = load_config_data(self.config_path)
             self.config = self._load_config()
             self._populate_settings_form()
-            self._set_entry(self.folder_path_entry, get_config_value(self.config_data, "default_folder_path"))
+            sync_folder = get_last_or_default_folder(self.config_data)
+            self.selected_folder_id = sync_folder["folder_id"] or None
+            self._set_entry(self.folder_path_entry, sync_folder["folder_path"])
             self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
             self._sync_mode_changed()
             self._append_log("设置已保存到 config.json。")
@@ -696,7 +744,9 @@ class InsEagleSyncApp(_BaseWindow):
             self.config_data = load_config_data(self.config_path)
             self.config = self._load_config()
             self._populate_settings_form()
-            self._set_entry(self.folder_path_entry, get_config_value(self.config_data, "default_folder_path"))
+            sync_folder = get_last_or_default_folder(self.config_data)
+            self.selected_folder_id = sync_folder["folder_id"] or None
+            self._set_entry(self.folder_path_entry, sync_folder["folder_path"])
             self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
             self._sync_mode_changed()
             self._append_log(f"设置已重新加载：{self.config_path}")
@@ -740,6 +790,8 @@ class InsEagleSyncApp(_BaseWindow):
             data = apply_storage_parent(data, storage_parent)
         data["eagle_api_base"] = eagle_api_base.rstrip("/")
         data["default_eagle_root_folder"] = folder_path
+        data["default_eagle_folder_path"] = folder_path
+        data["default_eagle_folder_id"] = self.selected_default_folder_id or ""
         data = apply_login_settings(
             data,
             method=self.login_method.get(),
@@ -917,6 +969,66 @@ class InsEagleSyncApp(_BaseWindow):
     def start_sync(self) -> None:
         self._run_sync_task(force_dry_run=False)
 
+    def choose_sync_eagle_folder(self) -> None:
+        self._open_eagle_folder_picker(
+            initial_folder_id=self.selected_folder_id,
+            on_select=self._apply_sync_folder_selection,
+        )
+
+    def choose_default_eagle_folder(self) -> None:
+        self._open_eagle_folder_picker(
+            initial_folder_id=self.selected_default_folder_id,
+            on_select=self._apply_default_folder_selection,
+        )
+
+    def _open_eagle_folder_picker(
+        self,
+        *,
+        initial_folder_id: str | None,
+        on_select: Callable[[dict[str, str]], None],
+    ) -> None:
+        if not self.config.eagle_api_base:
+            message = "无法连接 Eagle。请先打开 Eagle，并确认本地 API 地址正确。"
+            self._append_log(message)
+            return
+        try:
+            EagleFolderPickerDialog(
+                self,
+                config=self.config,
+                initial_folder_id=initial_folder_id,
+                on_select=on_select,
+                log=self._append_log,
+            )
+        except Exception as exc:  # noqa: BLE001 - user-facing GUI error.
+            self._append_log(folder_picker_error_message([str(exc)]))
+
+    def _apply_sync_folder_selection(self, selection: dict[str, str]) -> None:
+        self.selected_folder_id = selection.get("folder_id") or None
+        self._set_entry(self.folder_path_entry, selection.get("folder_path") or "")
+        self._remember_last_eagle_folder(selection)
+        self._append_log(f"已选择 Eagle 文件夹：{selection.get('folder_path')}")
+
+    def _apply_default_folder_selection(self, selection: dict[str, str]) -> None:
+        self.selected_default_folder_id = selection.get("folder_id") or None
+        self._set_entry(self.setting_entries["default_folder_path"], selection.get("folder_path") or "")
+        self._append_log(f"已选择默认 Eagle 文件夹：{selection.get('folder_path')}")
+
+    def _sync_folder_path_changed(self, _event: object | None = None) -> None:
+        self.selected_folder_id = None
+
+    def _default_folder_path_changed(self, _event: object | None = None) -> None:
+        self.selected_default_folder_id = None
+
+    def _remember_last_eagle_folder(self, selection: dict[str, str]) -> None:
+        try:
+            data = apply_last_eagle_folder(self.config_data, selection)
+            write_config_data(data, DEFAULT_CONFIG_PATH)
+            self.config_path = Path(DEFAULT_CONFIG_PATH)
+            self.config_data = load_config_data(self.config_path)
+            self.config = self._load_config()
+        except Exception as exc:  # noqa: BLE001 - remembering should not block selection.
+            self._append_log(f"警告：无法记住上次选择的 Eagle 文件夹：{exc}")
+
     def ensure_folder(self) -> None:
         folder_path = self.folder_path_entry.get().strip()
         if not folder_path:
@@ -990,8 +1102,10 @@ class InsEagleSyncApp(_BaseWindow):
             return
 
         def task() -> dict[str, Any]:
+            selected_folder_id = self.selected_folder_id
             kwargs = {
-                "folder_path": folder_path,
+                "folder_id": selected_folder_id,
+                "folder_path": None if selected_folder_id else folder_path,
                 "dry_run": dry_run,
                 "force": self.force_var.get(),
                 "verify_eagle": self.verify_var.get(),
@@ -1177,6 +1291,297 @@ class InsEagleSyncApp(_BaseWindow):
             entry.configure(state="disabled")
 
 
+class EagleFolderPickerDialog:
+    def __init__(
+        self,
+        parent: Any,
+        *,
+        config: AppConfig,
+        initial_folder_id: str | None = None,
+        on_select: Callable[[dict[str, str]], None],
+        log: Callable[[str], None] | None = None,
+    ) -> None:
+        if ctk is None:
+            raise RuntimeError("customtkinter is not installed")
+        self.parent = parent
+        self.config = config
+        self.initial_folder_id = initial_folder_id
+        self.on_select = on_select
+        self.log = log
+        self.folders: list[dict[str, Any]] = []
+        self.folder_by_id: dict[str, dict[str, Any]] = {}
+        self.children_by_parent: dict[str | None, list[dict[str, Any]]] = {}
+        self.selected_folder: dict[str, Any] | None = None
+        self.search_after_id: str | None = None
+        self.expanded_folder_ids: set[str] = set()
+        self.visible_rows: list[dict[str, Any]] = []
+        self.hover_row_index: int | None = None
+
+        self.window = ctk.CTkToplevel(parent)
+        self.window.title("选择 Eagle 导入位置")
+        self.window.geometry("760x620")
+        self.window.minsize(620, 460)
+        self.window.transient(parent)
+        self.window.grid_columnconfigure(0, weight=1)
+        self.window.grid_rowconfigure(2, weight=1)
+
+        ctk.CTkLabel(self.window, text="选择 Eagle 导入位置", text_color=COLORS["text"], font=FONTS["page_title"]).grid(
+            row=0, column=0, padx=SPACE["lg"], pady=(SPACE["lg"], SPACE["sm"]), sticky="w"
+        )
+        self.search_entry = ctk.CTkEntry(
+            self.window,
+            placeholder_text="搜索文件夹...",
+            height=INPUT_HEIGHT,
+            fg_color=COLORS["input"],
+            border_color=COLORS["border"],
+            text_color=COLORS["text"],
+            placeholder_text_color=COLORS["text_dim"],
+            corner_radius=RADIUS["control"],
+            font=FONTS["body"],
+        )
+        self.search_entry.grid(row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["md"]), sticky="ew")
+        self.search_entry.bind("<KeyRelease>", self._schedule_render)
+
+        self.list_frame = ctk.CTkFrame(
+            self.window,
+            fg_color=COLORS["surface"],
+            corner_radius=RADIUS["card"],
+        )
+        self.list_frame.grid(row=2, column=0, padx=SPACE["lg"], pady=(0, SPACE["md"]), sticky="nsew")
+        self.list_frame.grid_columnconfigure(0, weight=1)
+        self.list_frame.grid_rowconfigure(0, weight=1)
+        self.tree_canvas = tk.Canvas(
+            self.list_frame,
+            bg=COLORS["surface"],
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            bd=0,
+            relief="flat",
+        )
+        self.tree_canvas.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
+        self.tree_scrollbar = tk.Scrollbar(
+            self.list_frame,
+            orient="vertical",
+            command=self.tree_canvas.yview,
+            width=14,
+            bg=COLORS["surface_2"],
+            troughcolor=COLORS["surface"],
+            activebackground=COLORS["surface_3"],
+            highlightthickness=0,
+            bd=0,
+        )
+        self.tree_scrollbar.grid(row=0, column=1, sticky="ns", pady=1)
+        self.tree_canvas.configure(yscrollcommand=self.tree_scrollbar.set)
+        self.tree_canvas.bind("<Button-1>", self._tree_clicked)
+        self.tree_canvas.bind("<Double-Button-1>", self._tree_double_clicked)
+        self.tree_canvas.bind("<Motion>", self._tree_motion)
+        self.tree_canvas.bind("<Leave>", self._tree_left)
+        self.tree_canvas.bind("<MouseWheel>", self._tree_mousewheel)
+        self.tree_canvas.bind("<Configure>", lambda _event: self._draw_tree())
+
+        self.message_var = ctk.StringVar(value="正在读取 Eagle 文件夹...")
+        ctk.CTkLabel(self.window, textvariable=self.message_var, text_color=COLORS["text_muted"], font=FONTS["body"]).grid(
+            row=3, column=0, padx=SPACE["lg"], pady=(0, SPACE["sm"]), sticky="w"
+        )
+
+        actions = ctk.CTkFrame(self.window, fg_color="transparent")
+        actions.grid(row=4, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="ew")
+        actions.grid_columnconfigure(1, weight=1)
+        self.refresh_button = ctk.CTkButton(actions, text="刷新", width=96, command=self.refresh)
+        self.refresh_button.grid(row=0, column=0, padx=(0, SPACE["sm"]), sticky="w")
+        self.cancel_button = ctk.CTkButton(actions, text="取消", width=96, command=self.window.destroy)
+        self.cancel_button.grid(row=0, column=2, padx=SPACE["sm"], sticky="e")
+        self.select_button = ctk.CTkButton(actions, text="选择此文件夹", width=132, command=self.confirm_selection)
+        self.select_button.grid(row=0, column=3, padx=(SPACE["sm"], 0), sticky="e")
+        self.select_button.configure(state="disabled")
+
+        self.window.after(50, self.refresh)
+
+    def refresh(self) -> None:
+        self.message_var.set("正在读取 Eagle 文件夹...")
+        self._clear_tree()
+        self.refresh_button.configure(state="disabled")
+
+        def run() -> None:
+            try:
+                result = services.list_folders(self.config)
+            except Exception as exc:  # noqa: BLE001 - dialog must not crash GUI.
+                result = {"ok": False, "messages": [str(exc)]}
+            self.window.after(0, lambda: self._apply_folder_result(result))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _apply_folder_result(self, result: dict[str, Any]) -> None:
+        self.refresh_button.configure(state="normal")
+        if not result.get("ok"):
+            message = folder_picker_error_message(result.get("messages", []))
+            self.message_var.set(message)
+            if self.log is not None:
+                self.log(message)
+            return
+
+        self.folders = [folder for folder in result.get("folders", []) if isinstance(folder, dict)]
+        self.folder_by_id = {str(folder.get("id") or ""): folder for folder in self.folders if folder.get("id")}
+        self.children_by_parent = folder_children_index(self.folders)
+        if not self.folders:
+            message = "当前 Eagle 资料库没有可用文件夹。"
+            self.message_var.set(message)
+            if self.log is not None:
+                self.log(message)
+            return
+
+        self.selected_folder = find_folder_by_id(self.folders, self.initial_folder_id)
+        self.select_button.configure(state="normal" if self.selected_folder else "disabled")
+        self.message_var.set(f"已读取 {len(self.folders)} 个 Eagle 文件夹。")
+        self._render_tree()
+
+    def _schedule_render(self, _event: object | None = None) -> None:
+        if self.search_after_id is not None:
+            self.window.after_cancel(self.search_after_id)
+        self.search_after_id = self.window.after(180, self._render_tree)
+
+    def _render_tree(self) -> None:
+        self.search_after_id = None
+        self.visible_rows = folder_picker_rows(
+            self.folders,
+            self.search_entry.get(),
+            expanded_ids=self.expanded_folder_ids,
+        )
+        if not self.visible_rows:
+            self._clear_tree()
+            self.message_var.set("没有匹配的 Eagle 文件夹。")
+            return
+        self._draw_tree()
+
+    def select_folder(self, folder: dict[str, Any]) -> None:
+        self.selected_folder = folder
+        self.select_button.configure(state="normal")
+        self.message_var.set(str(folder.get("path") or folder.get("name") or ""))
+
+    def confirm_folder(self, folder: dict[str, Any]) -> None:
+        self.selected_folder = folder
+        self.confirm_selection()
+
+    def confirm_selection(self) -> None:
+        if self.selected_folder is None:
+            self.message_var.set("请先选择一个 Eagle 文件夹。")
+            return
+        self.on_select(folder_selection_result(self.selected_folder))
+        self.window.destroy()
+
+    def _draw_tree(self) -> None:
+        self.tree_canvas.delete("all")
+        width = max(self.tree_canvas.winfo_width(), 320)
+        total_height = max(len(self.visible_rows) * FOLDER_ROW_HEIGHT, self.tree_canvas.winfo_height())
+        self.tree_canvas.configure(scrollregion=(0, 0, width, total_height))
+
+        for index, row in enumerate(self.visible_rows):
+            self._draw_tree_row(index, row, width)
+
+    def _draw_tree_row(self, index: int, row: dict[str, Any], width: int) -> None:
+        folder = row["folder"]
+        folder_id = str(folder.get("id") or "")
+        y0 = index * FOLDER_ROW_HEIGHT
+        y1 = y0 + FOLDER_ROW_HEIGHT
+        selected = self.selected_folder is not None and str(self.selected_folder.get("id") or "") == folder_id
+        if selected:
+            bg = COLORS["primary"]
+        elif self.hover_row_index == index:
+            bg = COLORS["surface_3"]
+        else:
+            bg = COLORS["surface"]
+        self.tree_canvas.create_rectangle(0, y0, width, y1, fill=bg, outline="")
+
+        depth = int(row.get("depth") or 0)
+        x = 14 + depth * FOLDER_INDENT
+        has_children = bool(self.children_by_parent.get(folder_id)) and not row.get("search")
+        arrow = folder_row_arrow(folder, expanded_ids=self.expanded_folder_ids, search=bool(row.get("search")), has_children=has_children)
+        self.tree_canvas.create_text(
+            x + FOLDER_ARROW_WIDTH / 2,
+            y0 + FOLDER_ROW_HEIGHT / 2,
+            text=arrow,
+            fill=COLORS["text_muted"] if has_children else COLORS["text_dim"],
+            font=(FONTS["body"][0], 18, "bold"),
+            anchor="center",
+        )
+        color = folder_icon_color(folder.get("icon_color"))
+        self.tree_canvas.create_oval(
+            x + FOLDER_ARROW_WIDTH + 2,
+            y0 + 14,
+            x + FOLDER_ARROW_WIDTH + 8,
+            y0 + 20,
+            fill=color,
+            outline="",
+        )
+        text = format_folder_row_text(row)
+        self.tree_canvas.create_text(
+            x + FOLDER_ARROW_WIDTH + 16,
+            y0 + FOLDER_ROW_HEIGHT / 2,
+            text=text,
+            fill=COLORS["text"] if selected else "#dbeafe",
+            font=FONTS["body"],
+            anchor="w",
+        )
+
+    def _row_index_from_event(self, event: object) -> int | None:
+        canvas_y = self.tree_canvas.canvasy(getattr(event, "y", 0))
+        index = int(canvas_y // FOLDER_ROW_HEIGHT)
+        if 0 <= index < len(self.visible_rows):
+            return index
+        return None
+
+    def _tree_clicked(self, event: object) -> None:
+        index = self._row_index_from_event(event)
+        if index is None:
+            return
+        row = self.visible_rows[index]
+        folder = row["folder"]
+        folder_id = str(folder.get("id") or "")
+        x = getattr(event, "x", 0)
+        depth = int(row.get("depth") or 0)
+        arrow_left = 14 + depth * FOLDER_INDENT
+        arrow_right = arrow_left + FOLDER_ARROW_WIDTH
+        has_children = bool(self.children_by_parent.get(folder_id)) and not row.get("search")
+        if has_children and arrow_left <= x <= arrow_right:
+            if folder_id in self.expanded_folder_ids:
+                self.expanded_folder_ids.remove(folder_id)
+            else:
+                self.expanded_folder_ids.add(folder_id)
+            self._render_tree()
+            return
+        self.select_folder(folder)
+        self._draw_tree()
+
+    def _tree_double_clicked(self, event: object) -> None:
+        index = self._row_index_from_event(event)
+        if index is None:
+            return
+        self.confirm_folder(self.visible_rows[index]["folder"])
+
+    def _tree_motion(self, event: object) -> None:
+        index = self._row_index_from_event(event)
+        if index != self.hover_row_index:
+            self.hover_row_index = index
+            self._draw_tree()
+
+    def _tree_left(self, _event: object | None = None) -> None:
+        if self.hover_row_index is not None:
+            self.hover_row_index = None
+            self._draw_tree()
+
+    def _tree_mousewheel(self, event: object) -> str:
+        delta = getattr(event, "delta", 0)
+        if delta:
+            self.tree_canvas.yview_scroll(int(-1 * (delta / 120)), "units")
+        return "break"
+
+    def _clear_tree(self) -> None:
+        self.visible_rows = []
+        self.hover_row_index = None
+        self.tree_canvas.delete("all")
+        self.tree_canvas.configure(scrollregion=(0, 0, 1, 1))
+
+
 def ensure_config_file(
     config_path: str | Path = DEFAULT_CONFIG_PATH,
     example_path: str | Path = EXAMPLE_CONFIG_PATH,
@@ -1210,6 +1615,10 @@ def write_config_data(data: dict[str, Any], path: str | Path) -> None:
 def normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = default_config_data()
     _deep_update(normalized, data)
+    if not data.get("default_eagle_folder_path") and data.get("default_eagle_root_folder"):
+        normalized["default_eagle_folder_path"] = data["default_eagle_root_folder"]
+    if not normalized.get("default_eagle_root_folder") and normalized.get("default_eagle_folder_path"):
+        normalized["default_eagle_root_folder"] = normalized["default_eagle_folder_path"]
     return normalized
 
 
@@ -1231,7 +1640,13 @@ def get_config_value(data: dict[str, Any], key: str) -> Any:
     if key == "eagle_api_base":
         return data.get("eagle_api_base", "")
     if key == "default_folder_path":
-        return data.get("default_eagle_root_folder") or DEFAULT_FOLDER_PATH
+        return data.get("default_eagle_folder_path") or data.get("default_eagle_root_folder") or DEFAULT_FOLDER_PATH
+    if key == "default_folder_id":
+        return data.get("default_eagle_folder_id") or ""
+    if key == "last_folder_path":
+        return data.get("last_eagle_folder_path") or ""
+    if key == "last_folder_id":
+        return data.get("last_eagle_folder_id") or ""
     if key == "http_proxy":
         return data.get("proxy", {}).get("http_proxy") or ""
     if key == "https_proxy":
@@ -1278,6 +1693,24 @@ def apply_login_settings(
         cookies["enabled"] = False
         cookies["from_browser"] = ""
         cookies["file"] = ""
+    return updated
+
+
+def get_last_or_default_folder(data: dict[str, Any]) -> dict[str, str]:
+    last_path = str(get_config_value(data, "last_folder_path") or "")
+    last_id = str(get_config_value(data, "last_folder_id") or "")
+    if last_path or last_id:
+        return {"folder_path": last_path, "folder_id": last_id}
+    return {
+        "folder_path": str(get_config_value(data, "default_folder_path") or ""),
+        "folder_id": str(get_config_value(data, "default_folder_id") or ""),
+    }
+
+
+def apply_last_eagle_folder(data: dict[str, Any], selection: dict[str, str]) -> dict[str, Any]:
+    updated = normalize_config_data(data)
+    updated["last_eagle_folder_path"] = str(selection.get("folder_path") or "")
+    updated["last_eagle_folder_id"] = str(selection.get("folder_id") or "")
     return updated
 
 
@@ -1335,6 +1768,117 @@ def classify_log_message(message: str) -> str:
     if message.startswith("正常") or message.startswith("登录测试完成") or "成功" in message:
         return "ok"
     return "muted"
+
+
+def folder_picker_rows(
+    folders: list[dict[str, Any]],
+    query: str = "",
+    *,
+    expanded_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    text = query.strip().lower()
+    expanded = expanded_ids or set()
+    children_by_parent = folder_children_index(folders)
+    rows: list[dict[str, Any]] = []
+    if not text:
+        def add_visible(parent_id: str | None, depth: int) -> None:
+            for folder in children_by_parent.get(parent_id, []):
+                rows.append({"folder": folder, "depth": depth, "search": False})
+                folder_id = str(folder.get("id") or "")
+                if folder_id in expanded:
+                    add_visible(folder_id, depth + 1)
+
+        add_visible(None, 0)
+        return rows
+
+    for folder in folders:
+        path = str(folder.get("path") or folder.get("name") or "")
+        name = str(folder.get("name") or "")
+        if text not in name.lower() and text not in path.lower():
+            continue
+        rows.append(
+            {
+                "folder": folder,
+                "depth": 0,
+                "search": True,
+            }
+        )
+    return rows
+
+
+def format_folder_row_text(row: dict[str, Any]) -> str:
+    folder = row["folder"]
+    path = str(folder.get("path") or folder.get("name") or "")
+    count = _safe_int(folder.get("descendant_image_count") or folder.get("image_count") or 0)
+    suffix = f"  ({count})" if count else ""
+    if row.get("search"):
+        return f"{FOLDER_DISPLAY_ICON} {path}{suffix}"
+    return f"{FOLDER_DISPLAY_ICON} {folder.get('name') or path}{suffix}"
+
+
+def folder_row_arrow(
+    folder: dict[str, Any],
+    *,
+    expanded_ids: set[str],
+    search: bool,
+    has_children: bool,
+) -> str:
+    if search or not has_children:
+        return ""
+    return "▾" if str(folder.get("id") or "") in expanded_ids else "▸"
+
+
+def folder_children_index(folders: list[dict[str, Any]]) -> dict[str | None, list[dict[str, Any]]]:
+    folder_ids = {str(folder.get("id") or "") for folder in folders if folder.get("id")}
+    children_by_parent: dict[str | None, list[dict[str, Any]]] = {}
+    for folder in folders:
+        parent_id = folder.get("parent_id")
+        resolved_parent_id = str(parent_id) if parent_id and str(parent_id) in folder_ids else None
+        children_by_parent.setdefault(resolved_parent_id, []).append(folder)
+    return children_by_parent
+
+
+def folder_selection_result(folder: dict[str, Any]) -> dict[str, str]:
+    return {
+        "folder_id": str(folder.get("id") or ""),
+        "folder_path": str(folder.get("path") or folder.get("name") or ""),
+    }
+
+
+def find_folder_by_id(folders: list[dict[str, Any]], folder_id: str | None) -> dict[str, Any] | None:
+    if not folder_id:
+        return None
+    for folder in folders:
+        if str(folder.get("id") or "") == folder_id:
+            return folder
+    return None
+
+
+def folder_picker_error_message(messages: object) -> str:
+    if isinstance(messages, (list, tuple)):
+        detail = "; ".join(str(message) for message in messages if message)
+    else:
+        detail = str(messages or "")
+    lowered = detail.lower()
+    if any(marker in lowered for marker in ("connection", "refused", "not available", "failed to establish")):
+        return "无法读取 Eagle 文件夹，请确认 Eagle 已打开并且本地 API 地址正确。"
+    if not detail:
+        return "读取 Eagle 文件夹失败。"
+    return f"读取 Eagle 文件夹失败：{detail}"
+
+
+def folder_icon_color(value: object) -> str:
+    text = str(value or "").strip()
+    if text.startswith("#") and len(text) in {4, 7, 9}:
+        return text
+    return COLORS["primary"]
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def scan_browser_profiles(

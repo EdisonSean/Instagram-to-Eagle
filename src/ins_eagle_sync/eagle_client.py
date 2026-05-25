@@ -31,7 +31,7 @@ class EagleClient:
         _decode_eagle_response(response, action="check Eagle app availability")
         return True
 
-    def list_folders(self) -> list[dict[str, str | None]]:
+    def list_folders(self) -> list[dict[str, Any]]:
         try:
             response = requests.get(f"{self.api_base}/api/folder/list", timeout=10)
         except requests.RequestException as exc:
@@ -41,7 +41,7 @@ class EagleClient:
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, list):
             return []
-        return _flatten_folder_tree(data)
+        return _normalize_folder_nodes(data)
 
     def create_folder(self, name: str, parent_id: str | None = None) -> dict[str, str | None]:
         payload = {"folderName": name}
@@ -274,6 +274,108 @@ def _flatten_folder_tree(
             entries.extend(_flatten_folder_tree(children, parent_id=folder_id, parent_path=path))
 
     return entries
+
+
+def _normalize_folder_nodes(folders: list[Any]) -> list[dict[str, Any]]:
+    nodes = _collect_folder_nodes(folders)
+    node_by_id = {str(node["id"]): node for node in nodes}
+    children_by_parent: dict[str | None, list[dict[str, Any]]] = {}
+    for node in nodes:
+        parent_id = node.get("parent_id")
+        if parent_id and parent_id not in node_by_id:
+            parent_id = None
+            node["parent_id"] = None
+        children_by_parent.setdefault(parent_id, []).append(node)
+
+    for node in nodes:
+        node["children"] = children_by_parent.get(str(node["id"]), [])
+
+    ordered: list[dict[str, Any]] = []
+
+    def visit(node: dict[str, Any], parent_path: str = "") -> None:
+        name = str(node["name"])
+        node["path"] = f"{parent_path}/{name}" if parent_path else name
+        ordered.append(node)
+        for child in node["children"]:
+            visit(child, node["path"])
+
+    for root in children_by_parent.get(None, []):
+        visit(root)
+
+    return ordered
+
+
+def _collect_folder_nodes(
+    folders: list[Any],
+    *,
+    parent_id: str | None = None,
+) -> list[dict[str, Any]]:
+    nodes: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    def collect(items: list[Any], current_parent_id: str | None) -> None:
+        for folder in items:
+            if not isinstance(folder, dict) or not folder.get("id") or not folder.get("name"):
+                continue
+            folder_id = str(folder["id"])
+            if folder_id in seen_ids:
+                continue
+            seen_ids.add(folder_id)
+            resolved_parent_id = _folder_parent_id(folder) or current_parent_id
+            nodes.append(_folder_node(folder, parent_id=resolved_parent_id))
+            children = _folder_children(folder)
+            if children:
+                collect(children, folder_id)
+
+    collect(folders, parent_id)
+    return nodes
+
+
+def _folder_node(folder: dict[str, Any], *, parent_id: str | None) -> dict[str, Any]:
+    return {
+        "id": str(folder["id"]),
+        "name": str(folder["name"]),
+        "parent_id": parent_id,
+        "path": "",
+        "children": [],
+        "icon": _optional_str(folder, "icon"),
+        "icon_color": _optional_str(folder, "iconColor", "icon_color", "color"),
+        "image_count": _optional_int(folder, "imageCount", "image_count", "count"),
+        "descendant_image_count": _optional_int(
+            folder,
+            "descendantImageCount",
+            "descendant_image_count",
+            "childrenImageCount",
+        ),
+    }
+
+
+def _folder_children(folder: dict[str, Any]) -> list[Any]:
+    for key in ("children", "folders"):
+        children = folder.get(key)
+        if isinstance(children, list):
+            return children
+    return []
+
+
+def _optional_str(folder: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = folder.get(key)
+        if value is not None and value != "":
+            return str(value)
+    return None
+
+
+def _optional_int(folder: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = folder.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
 def _folder_parent_id(folder: dict[str, Any]) -> str | None:

@@ -7,6 +7,30 @@ from ins_eagle_sync.config import load_config
 from ins_eagle_sync.ui_theme import APP_TITLE, COLORS
 
 
+class FakeEntry:
+    def __init__(self) -> None:
+        self.value = ""
+        self.state = "normal"
+
+    def cget(self, key: str) -> str:
+        if key == "state":
+            return self.state
+        raise KeyError(key)
+
+    def configure(self, **kwargs) -> None:
+        if "state" in kwargs:
+            self.state = kwargs["state"]
+
+    def delete(self, start, end) -> None:
+        self.value = ""
+
+    def insert(self, index, value) -> None:
+        self.value = str(value)
+
+    def get(self) -> str:
+        return self.value
+
+
 def test_gui_module_exposes_main() -> None:
     assert callable(gui.main)
     assert APP_TITLE == "Instagram to Eagle"
@@ -45,6 +69,10 @@ def test_write_config_data_can_be_reloaded(project_tmp_path) -> None:
     data = gui.default_config_data()
     data["eagle_api_base"] = "http://localhost:41596"
     data["default_eagle_root_folder"] = "Instagram/quinn.xyz"
+    data["default_eagle_folder_path"] = "Instagram/quinn.xyz"
+    data["default_eagle_folder_id"] = "folder-1"
+    data["last_eagle_folder_path"] = "Instagram/last"
+    data["last_eagle_folder_id"] = "last-1"
     data["cookies"]["file"] = str(project_tmp_path / "secret-cookies.txt")
     data["download"]["max_posts"] = 12
 
@@ -54,6 +82,10 @@ def test_write_config_data_can_be_reloaded(project_tmp_path) -> None:
 
     assert loaded_data["eagle_api_base"] == "http://localhost:41596"
     assert loaded_config.default_eagle_root_folder == "Instagram/quinn.xyz"
+    assert loaded_config.default_eagle_folder_path == "Instagram/quinn.xyz"
+    assert loaded_config.default_eagle_folder_id == "folder-1"
+    assert loaded_config.last_eagle_folder_path == "Instagram/last"
+    assert loaded_config.last_eagle_folder_id == "last-1"
     assert loaded_config.download.max_posts == 12
 
 
@@ -332,3 +364,164 @@ def test_log_message_classification() -> None:
     assert gui.classify_log_message("正常：ready") == "ok"
     assert gui.classify_log_message("警告：check cookies") == "warning"
     assert gui.classify_log_message("错误：failed") == "error"
+
+
+def test_folder_picker_rows_support_tree_and_search() -> None:
+    folders = [
+        {"id": "root-1", "name": "Instagram", "path": "Instagram", "parent_id": None, "icon": "award3"},
+        {"id": "child-1", "name": "quinn.xyz", "path": "Instagram/quinn.xyz", "parent_id": "root-1", "icon": "tree"},
+        {"id": "cg-1", "name": "CG", "path": "CG", "parent_id": None, "icon": "briefcase"},
+        {"id": "other-1", "name": "reference", "path": "CG/houdini/reference", "parent_id": "cg-1"},
+    ]
+
+    tree_rows = gui.folder_picker_rows(folders)
+    expanded_rows = gui.folder_picker_rows(folders, expanded_ids={"root-1"})
+    collapsed_again_rows = gui.folder_picker_rows(folders, expanded_ids=set())
+    search_rows = gui.folder_picker_rows(folders, "houdini")
+
+    assert [row["folder"]["name"] for row in tree_rows] == ["Instagram", "CG"]
+    assert [row["folder"]["name"] for row in expanded_rows] == ["Instagram", "quinn.xyz", "CG"]
+    assert [row["folder"]["name"] for row in collapsed_again_rows] == ["Instagram", "CG"]
+    assert [row["folder"]["path"] for row in search_rows] == ["CG/houdini/reference"]
+    assert search_rows[0]["search"] is True
+
+
+def test_folder_picker_display_uses_name_not_raw_icon() -> None:
+    folder = {
+        "id": "folder-1",
+        "name": "Real Folder",
+        "path": "Instagram/Real Folder",
+        "icon": "award3",
+        "icon_color": "#ff0000",
+    }
+
+    tree_text = gui.format_folder_row_text({"folder": folder, "depth": 0, "search": False})
+    search_text = gui.format_folder_row_text({"folder": folder, "depth": 0, "search": True})
+
+    assert "Real Folder" in tree_text
+    assert "Instagram/Real Folder" in search_text
+    assert "award3" not in tree_text
+    assert "award3" not in search_text
+
+
+def test_folder_row_arrow_uses_modern_triangles() -> None:
+    folder = {"id": "root-1", "name": "Instagram"}
+
+    assert gui.folder_row_arrow(folder, expanded_ids=set(), search=False, has_children=True) == "▸"
+    assert gui.folder_row_arrow(folder, expanded_ids={"root-1"}, search=False, has_children=True) == "▾"
+    assert gui.folder_row_arrow(folder, expanded_ids={"root-1"}, search=True, has_children=True) == ""
+    assert gui.folder_row_arrow(folder, expanded_ids=set(), search=False, has_children=False) == ""
+
+
+def test_folder_children_index_supports_parent_links() -> None:
+    folders = [
+        {"id": "root-1", "name": "Instagram", "path": "Instagram", "parent_id": None},
+        {"id": "child-1", "name": "quinn.xyz", "path": "Instagram/quinn.xyz", "parent_id": "root-1"},
+    ]
+
+    children = gui.folder_children_index(folders)
+
+    assert children[None][0]["id"] == "root-1"
+    assert children["root-1"][0]["id"] == "child-1"
+
+
+def test_folder_selection_result_returns_id_and_path() -> None:
+    folder = {"id": "child-1", "name": "quinn.xyz", "path": "Instagram/quinn.xyz"}
+
+    assert gui.folder_selection_result(folder) == {
+        "folder_id": "child-1",
+        "folder_path": "Instagram/quinn.xyz",
+    }
+
+
+def test_gui_sync_folder_selection_updates_entry_and_id() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.folder_path_entry = FakeEntry()
+    app.selected_folder_id = None
+    logs = []
+    app._append_log = logs.append
+
+    gui.InsEagleSyncApp._apply_sync_folder_selection(
+        app,
+        {"folder_id": "child-1", "folder_path": "Instagram/quinn.xyz"},
+    )
+
+    assert app.folder_path_entry.get() == "Instagram/quinn.xyz"
+    assert app.selected_folder_id == "child-1"
+    assert logs[-1] == "已选择 Eagle 文件夹：Instagram/quinn.xyz"
+
+
+def test_gui_manual_sync_folder_edit_clears_selected_id() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.selected_folder_id = "child-1"
+
+    gui.InsEagleSyncApp._sync_folder_path_changed(app)
+
+    assert app.selected_folder_id is None
+
+
+def test_gui_default_folder_selection_updates_entry_and_id() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.setting_entries = {"default_folder_path": FakeEntry()}
+    app.selected_default_folder_id = None
+    logs = []
+    app._append_log = logs.append
+
+    gui.InsEagleSyncApp._apply_default_folder_selection(
+        app,
+        {"folder_id": "default-1", "folder_path": "Instagram/default"},
+    )
+
+    assert app.setting_entries["default_folder_path"].get() == "Instagram/default"
+    assert app.selected_default_folder_id == "default-1"
+
+
+def test_gui_manual_default_folder_edit_clears_selected_id() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.selected_default_folder_id = "default-1"
+
+    gui.InsEagleSyncApp._default_folder_path_changed(app)
+
+    assert app.selected_default_folder_id is None
+
+
+def test_folder_picker_error_message_is_user_friendly() -> None:
+    message = gui.folder_picker_error_message(["Eagle Local API folder list request failed: connection refused"])
+
+    assert message == "无法读取 Eagle 文件夹，请确认 Eagle 已打开并且本地 API 地址正确。"
+
+
+def test_last_folder_overrides_default_folder_for_sync_entry() -> None:
+    data = gui.default_config_data()
+    data["default_eagle_folder_path"] = "Instagram/default"
+    data["default_eagle_folder_id"] = "default-1"
+    data["last_eagle_folder_path"] = "Instagram/last"
+    data["last_eagle_folder_id"] = "last-1"
+
+    assert gui.get_last_or_default_folder(data) == {
+        "folder_path": "Instagram/last",
+        "folder_id": "last-1",
+    }
+
+
+def test_last_folder_falls_back_to_default_folder() -> None:
+    data = gui.default_config_data()
+    data["default_eagle_folder_path"] = "Instagram/default"
+    data["default_eagle_folder_id"] = "default-1"
+    data["last_eagle_folder_path"] = ""
+    data["last_eagle_folder_id"] = ""
+
+    assert gui.get_last_or_default_folder(data) == {
+        "folder_path": "Instagram/default",
+        "folder_id": "default-1",
+    }
+
+
+def test_apply_last_eagle_folder_updates_config_data() -> None:
+    data = gui.apply_last_eagle_folder(
+        gui.default_config_data(),
+        {"folder_id": "last-1", "folder_path": "Instagram/last"},
+    )
+
+    assert data["last_eagle_folder_path"] == "Instagram/last"
+    assert data["last_eagle_folder_id"] == "last-1"
