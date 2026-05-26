@@ -1,7 +1,12 @@
-@import "assets/icon.png" {width="300px"}
+<p align="left">
+  <img src="assets/icon.png" width="250" alt="Instagram to Eagle">
+</p>
+
 # Instagram to Eagle
 
-**Instagram to Eagle** 是一个 Windows 优先的 Python 工具，用 `gallery-dl` 下载 Instagram 内容到本地 staging 目录，再读取 metadata JSON，通过 Eagle Local API 导入 Eagle。
+### Instagram to Eagle用于批量下载Instagram帖子并自动导入Eagle，生成备注和链接。
+
+这是一个 Windows 优先的 Python 工具，用 `gallery-dl` 下载 Instagram 内容到本地 staging 目录，再读取 metadata JSON，通过 Eagle Local API 导入 Eagle。
 
 项目提供 GUI 和 CLI 两种入口。下载文件只会进入配置的 staging 目录，不会直接写入 Eagle 资源库。
 
