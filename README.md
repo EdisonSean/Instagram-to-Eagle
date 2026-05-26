@@ -3,7 +3,8 @@
 </p>
 
 # Instagram to Eagle
-
+**下载地址：**
+[![Releases](https://img.shields.io/github/v/release/EdisonSean/Instagram-to-Eagle?style=for-the-badge)](https://github.com/EdisonSean/Instagram-to-Eagle/releases)
 ### Instagram to Eagle用于批量下载Instagram帖子并自动导入Eagle，生成备注和链接。
 
 这是一个 Windows 优先的 Python 工具，用 `gallery-dl` 下载 Instagram 内容到本地 staging 目录，再读取 metadata JSON，通过 Eagle Local API 导入 Eagle。
