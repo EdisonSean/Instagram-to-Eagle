@@ -25,6 +25,7 @@ COLORS = {
     "success": "#5CBF7A",
     "warning": "#DDB86A",
     "danger": "#E06C75",
+    "danger_hover": "#C85B63",
 }
 
 FONTS = {
@@ -75,6 +76,12 @@ BUTTON_STYLES = {
         "border_width": 1,
         "border_color": COLORS["border_soft"],
         "text_color": COLORS["text_muted"],
+    },
+    "danger": {
+        "fg_color": COLORS["danger"],
+        "hover_color": COLORS["danger_hover"],
+        "border_width": 0,
+        "text_color": COLORS["text"],
     },
 }
 

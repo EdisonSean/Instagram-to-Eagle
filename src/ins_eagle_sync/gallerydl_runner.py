@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .config import AppConfig, resolve_gallery_dl_command, resolve_ytdlp_command
 from .proxy_utils import build_proxy_env
@@ -19,6 +19,9 @@ LogFn = Callable[[str], None]
 NO_OUTPUT_STILL_RUNNING_SECONDS = 60.0
 NO_OUTPUT_STUCK_SECONDS = 120.0
 NO_OUTPUT_POLL_SECONDS = 0.2
+GALLERY_DL_CANCELLED_RETURN_CODE = -15
+GALLERY_DL_CANCELLED_HINT = "已请求停止，正在终止 gallery-dl。"
+GALLERY_DL_KILLED_HINT = "gallery-dl 未及时退出，已强制结束。"
 DATE_FILTER_FALLBACK_MAX_POSTS = 500
 DATE_FILTER_FALLBACK_TERMINATE_SKIPS = 20
 CDN_TIMEOUT_HINT = "Instagram CDN 下载超时，gallery-dl 正在重试，可能与网络或代理有关。"
@@ -198,6 +201,7 @@ def run_gallery_dl(
     max_posts: int | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    cancel_event: Any | None = None,
     log: LogFn = print,
 ) -> subprocess.CompletedProcess[str] | None:
     request = build_gallery_dl_request(
@@ -225,7 +229,7 @@ def run_gallery_dl(
 
     env = build_subprocess_env(config)
     log_proxy_status(config, env=env, log=log)
-    result = run_subprocess_realtime(request.command, env=env, log=log)
+    result = run_subprocess_realtime(request.command, env=env, log=log, cancel_event=cancel_event)
     log_gallery_dl_result(result, request.target_dir, log=log, log_captured_output=False)
     return result
 
@@ -235,6 +239,7 @@ def run_subprocess_realtime(
     *,
     env: dict[str, str] | None,
     log: LogFn,
+    cancel_event: Any | None = None,
 ) -> subprocess.CompletedProcess[str]:
     process = subprocess.Popen(
         command,
@@ -262,14 +267,25 @@ def run_subprocess_realtime(
     stuck_logged = False
     finished_streams = 0
     last_output_at = time.monotonic()
+    cancellation_requested = False
 
     while True:
-        if process.poll() is not None and finished_streams >= 2 and events.empty():
+        if _event_is_set(cancel_event) and not cancellation_requested:
+            cancellation_requested = True
+            log(GALLERY_DL_CANCELLED_HINT)
+            try:
+                process.terminate()
+            except Exception:  # noqa: BLE001 - the process may already have exited.
+                pass
+
+        if process.poll() is not None and (finished_streams >= 2 or cancellation_requested) and events.empty():
             break
 
         try:
             stream_name, line = events.get(timeout=NO_OUTPUT_POLL_SECONDS)
         except queue.Empty:
+            if cancellation_requested:
+                break
             if process.poll() is None:
                 now = time.monotonic()
                 silent_for = now - last_output_at
@@ -306,7 +322,20 @@ def run_subprocess_realtime(
                 log(YTDLP_MISSING_HINT)
                 ytdlp_hint_logged = True
 
-    returncode = process.wait()
+    if cancellation_requested and process.poll() is None:
+        try:
+            returncode = process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+                log(GALLERY_DL_KILLED_HINT)
+            except Exception:  # noqa: BLE001 - the process may already have exited.
+                pass
+            returncode = process.wait()
+    else:
+        returncode = process.wait()
+    if cancellation_requested and returncode == 0:
+        returncode = GALLERY_DL_CANCELLED_RETURN_CODE
     return subprocess.CompletedProcess(
         args=command,
         returncode=returncode,
@@ -326,6 +355,15 @@ def _enqueue_stream_lines(
                 events.put((stream_name, str(line)))
     finally:
         events.put((stream_name, None))
+
+
+def _event_is_set(event: Any | None) -> bool:
+    if event is None:
+        return False
+    try:
+        return bool(event.is_set())
+    except Exception:  # noqa: BLE001 - tolerate lightweight test doubles.
+        return False
 
 
 def validate_cookie_file(

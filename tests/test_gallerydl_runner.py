@@ -11,6 +11,8 @@ from ins_eagle_sync.gallerydl_runner import (
     DATE_FILTER_FALLBACK_HINT,
     DATE_FILTER_FALLBACK_MAX_POSTS,
     DATE_FILTER_FALLBACK_TERMINATE_SKIPS,
+    GALLERY_DL_CANCELLED_HINT,
+    GALLERY_DL_CANCELLED_RETURN_CODE,
     YTDLP_MISSING_HINT,
     build_gallery_dl_date_filter,
     build_gallery_dl_request,
@@ -45,6 +47,23 @@ class SilentFakePopen(FakePopen):
     def poll(self):
         self.poll_count += 1
         return None if self.poll_count < 7 else self.returncode
+
+
+class CancellableFakePopen(FakePopen):
+    def __init__(self, command, **kwargs):
+        super().__init__(command, stdout_text="", stderr_text="", returncode=0, **kwargs)
+        self.returncode = None
+        self.terminated = False
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        self.returncode = GALLERY_DL_CANCELLED_RETURN_CODE
+        return self.returncode
 
 
 def make_config(project_tmp_path, *, proxy_enabled=False, cookies=None, yt_dlp_executable=None):
@@ -532,6 +551,25 @@ def test_run_subprocess_realtime_logs_no_output_progress(monkeypatch):
     assert result.returncode == 0
     assert "下载仍在进行。" in logs
     assert "可能卡住。" in logs
+
+
+def test_run_subprocess_realtime_terminates_when_cancelled():
+    logs = []
+    cancel_event = type("CancelEvent", (), {"is_set": lambda self: True})()
+    process_holder = {}
+
+    with patch("ins_eagle_sync.gallerydl_runner.subprocess.Popen") as popen_mock:
+        def make_process(command, **kwargs):
+            process = CancellableFakePopen(command, **kwargs)
+            process_holder["process"] = process
+            return process
+
+        popen_mock.side_effect = make_process
+        result = run_subprocess_realtime(["gallery-dl"], env=None, log=logs.append, cancel_event=cancel_event)
+
+    assert result.returncode == GALLERY_DL_CANCELLED_RETURN_CODE
+    assert process_holder["process"].terminated is True
+    assert GALLERY_DL_CANCELLED_HINT in logs
 
 
 def test_proxy_env_is_none_when_proxy_disabled(project_tmp_path):

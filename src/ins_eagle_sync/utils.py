@@ -35,12 +35,46 @@ _RESERVED_AUTHOR_PATHS = {
 }
 
 _HASHTAG_RE = re.compile(r"(?<!\w)#([\w\u4e00-\u9fff]+)", re.UNICODE)
+_URL_SEPARATOR_RE = re.compile(r"[\s,，;；]+")
+_URL_EDGE_CHARS = "\"'“”‘’()[]{}<>"
+_URL_TRAILING_CHARS = ".,，;；。"
 
 
 def normalize_instagram_url(url: str) -> str:
     """Return the canonical Instagram URL used by downloads and Eagle metadata."""
 
     return detect_instagram_url(url).normalized_url
+
+
+def split_instagram_url_text(text: str) -> list[str]:
+    """Split user-pasted Instagram URL text into URL-like tokens.
+
+    The GUI accepts the common paste formats users naturally try: one URL per
+    line, space-separated URLs, or comma/semicolon-separated URLs.
+    """
+
+    urls: list[str] = []
+    for raw in _URL_SEPARATOR_RE.split(text.strip()):
+        token = raw.strip().strip(_URL_EDGE_CHARS).rstrip(_URL_TRAILING_CHARS)
+        if token:
+            urls.append(token)
+    return urls
+
+
+def normalize_instagram_post_urls(text: str) -> list[str]:
+    """Return de-duplicated canonical post/reel/tv URLs from user text."""
+
+    normalized_urls: list[str] = []
+    seen: set[str] = set()
+    for raw_url in split_instagram_url_text(text):
+        info = detect_instagram_url(raw_url)
+        if info.mode != InstagramMode.POST:
+            raise ValueError("Single-post mode only supports /p/, /reel/, or /tv/ URLs.")
+        if info.normalized_url in seen:
+            continue
+        normalized_urls.append(info.normalized_url)
+        seen.add(info.normalized_url)
+    return normalized_urls
 
 
 def detect_instagram_url(url: str) -> InstagramUrl:

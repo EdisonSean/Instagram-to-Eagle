@@ -9,7 +9,7 @@ from .gallerydl_runner import build_gallery_dl_request, run_gallery_dl
 from .importer import import_staging_items, verify_import_records
 from .metadata_parser import ImportItem, scan_staging_dir
 from .state_store import ImportedState
-from .utils import detect_instagram_url
+from .utils import detect_instagram_url, normalize_instagram_post_urls
 
 
 LogFn = Callable[[str], None]
@@ -78,10 +78,13 @@ def sync_post(
     show_annotation: bool = False,
     ignore_archive: bool = False,
     verbose_gallery_dl: bool = False,
+    cancel_event: Any | None = None,
     log: LogFn | None = None,
 ) -> dict[str, Any]:
     messages: list[str] = []
     logger = _logger(messages, log)
+    if _is_cancelled(cancel_event):
+        return _cancelled_service_result(messages, log=logger)
     info = detect_instagram_url(post_url)
     if info.mode.value != "post":
         logger("sync-post requires a post or reel URL.")
@@ -99,8 +102,11 @@ def sync_post(
         dry_run=dry_run,
         ignore_archive=ignore_archive,
         verbose=verbose_gallery_dl,
+        cancel_event=cancel_event,
         log=logger,
     )
+    if _is_cancelled(cancel_event):
+        return _cancelled_service_result(messages, log=logger, returncode=download_result.returncode if download_result else None)
     if download_result is not None and download_result.returncode != 0:
         return _service_result(False, messages=messages, returncode=download_result.returncode)
 
@@ -115,6 +121,8 @@ def sync_post(
     )
     if empty_result is not None:
         return empty_result
+    if _is_cancelled(cancel_event):
+        return _cancelled_service_result(messages, log=logger)
 
     return _import_from_items(
         config,
@@ -128,6 +136,108 @@ def sync_post(
         messages=messages,
         log=logger,
     )
+
+
+def sync_posts(
+    config: AppConfig,
+    post_urls_text: str,
+    *,
+    folder_id: str | None = None,
+    folder_path: str | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    verify_eagle: bool = False,
+    show_annotation: bool = False,
+    ignore_archive: bool = False,
+    verbose_gallery_dl: bool = False,
+    cancel_event: Any | None = None,
+    log: LogFn | None = None,
+) -> dict[str, Any]:
+    messages: list[str] = []
+    logger = _logger(messages, log)
+    try:
+        normalized_urls = normalize_instagram_post_urls(post_urls_text)
+    except ValueError as exc:
+        logger(f"error: {exc}")
+        return _service_result(False, messages=messages, total=0, skipped=0, imported=0, failed=1, failures=[])
+
+    if not normalized_urls:
+        logger("sync-post requires at least one post, reel, or tv URL.")
+        return _service_result(False, messages=messages, total=0, skipped=0, imported=0, failed=1, failures=[])
+
+    if len(normalized_urls) > 1:
+        logger(f"单帖模式：共 {len(normalized_urls)} 个帖子链接，将按顺序同步。")
+
+    total = 0
+    skipped = 0
+    imported = 0
+    failed = 0
+    failures: list[dict[str, Any]] = []
+    ok = True
+    returncode: int | None = None
+    for index, normalized_url in enumerate(normalized_urls, start=1):
+        if _is_cancelled(cancel_event):
+            return _service_result(
+                False,
+                messages=messages,
+                total=total,
+                skipped=skipped,
+                imported=imported,
+                failed=failed,
+                failures=failures,
+                cancelled=True,
+            )
+        if len(normalized_urls) > 1:
+            logger(f"单帖模式：正在处理 {index}/{len(normalized_urls)}：{normalized_url}")
+        result = sync_post(
+            config,
+            normalized_url,
+            folder_id=folder_id,
+            folder_path=folder_path,
+            dry_run=dry_run,
+            force=force,
+            verify_eagle=verify_eagle,
+            show_annotation=show_annotation,
+            ignore_archive=ignore_archive,
+            verbose_gallery_dl=verbose_gallery_dl,
+            cancel_event=cancel_event,
+            log=logger,
+        )
+        total += int(result.get("total", 0) or 0)
+        skipped += int(result.get("skipped", 0) or 0)
+        imported += int(result.get("imported", 0) or 0)
+        result_failed = int(result.get("failed", 0) or 0)
+        if not result.get("ok", False) and "failed" not in result:
+            result_failed = 1
+        failed += result_failed
+        failures.extend(result.get("failures", []) or [])
+        if not result.get("ok", False):
+            ok = False
+            if returncode is None:
+                returncode = result.get("returncode")
+        if result.get("cancelled") or _is_cancelled(cancel_event):
+            return _service_result(
+                False,
+                messages=messages,
+                total=total,
+                skipped=skipped,
+                imported=imported,
+                failed=failed,
+                failures=failures,
+                cancelled=True,
+                **({"returncode": returncode} if returncode is not None else {}),
+            )
+
+    extra: dict[str, Any] = {
+        "total": total,
+        "skipped": skipped,
+        "imported": imported,
+        "failed": failed,
+        "failures": failures,
+    }
+    if returncode is not None:
+        extra["returncode"] = returncode
+    return _service_result(ok, messages=messages, **extra)
 
 
 def sync_author(
@@ -145,10 +255,13 @@ def sync_author(
     show_annotation: bool = False,
     ignore_archive: bool = False,
     verbose_gallery_dl: bool = False,
+    cancel_event: Any | None = None,
     log: LogFn | None = None,
 ) -> dict[str, Any]:
     messages: list[str] = []
     logger = _logger(messages, log)
+    if _is_cancelled(cancel_event):
+        return _cancelled_service_result(messages, log=logger)
     info = detect_instagram_url(author_url)
     if info.mode.value != "author":
         logger("sync-author requires an author URL, e.g. https://www.instagram.com/username/")
@@ -185,8 +298,11 @@ def sync_author(
         max_posts=max_posts,
         date_from=date_from,
         date_to=date_to,
+        cancel_event=cancel_event,
         log=logger,
     )
+    if _is_cancelled(cancel_event):
+        return _cancelled_service_result(messages, log=logger, returncode=download_result.returncode if download_result else None)
     if download_result is not None and download_result.returncode != 0:
         return _service_result(False, messages=messages, returncode=download_result.returncode)
 
@@ -486,6 +602,35 @@ def _logger(messages: list[str], log: LogFn | None) -> LogFn:
             log(text)
 
     return emit
+
+
+def _is_cancelled(cancel_event: Any | None) -> bool:
+    if cancel_event is None:
+        return False
+    try:
+        return bool(cancel_event.is_set())
+    except Exception:  # noqa: BLE001 - tolerate lightweight test doubles.
+        return False
+
+
+def _cancelled_service_result(
+    messages: list[str],
+    *,
+    log: LogFn,
+    returncode: int | None = None,
+) -> dict[str, Any]:
+    log("已停止当前同步任务。")
+    extra: dict[str, Any] = {
+        "total": 0,
+        "skipped": 0,
+        "imported": 0,
+        "failed": 0,
+        "failures": [],
+        "cancelled": True,
+    }
+    if returncode is not None:
+        extra["returncode"] = returncode
+    return _service_result(False, messages=messages, **extra)
 
 
 def _service_result(ok: bool, *, messages: list[str], **extra: Any) -> dict[str, Any]:

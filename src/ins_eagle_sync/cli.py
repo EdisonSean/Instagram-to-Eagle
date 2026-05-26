@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     import_staging_parser.add_argument("--show-annotation", action="store_true")
 
     sync_post_parser = subparsers.add_parser("sync-post", help="Download and import a single Instagram post.")
-    sync_post_parser.add_argument("post_url")
+    sync_post_parser.add_argument("post_urls", nargs="+")
     sync_post_parser.add_argument("--folder-id")
     sync_post_parser.add_argument("--folder-path")
     sync_post_parser.add_argument("--dry-run", action="store_true")
@@ -190,10 +190,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result["ok"] else 1
 
     if args.command == "sync-post":
-        info = detect_instagram_url(args.post_url)
-        result = services.sync_post(
+        result = services.sync_posts(
             config,
-            info.normalized_url,
+            " ".join(args.post_urls),
             folder_id=args.folder_id,
             folder_path=args.folder_path,
             dry_run=args.dry_run,

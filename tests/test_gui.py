@@ -32,6 +32,14 @@ class FakeEntry:
         return self.value
 
 
+class FakeUrlText:
+    def __init__(self, value="") -> None:
+        self.value = value
+
+    def get(self, *_args) -> str:
+        return self.value
+
+
 class FakeChoice:
     def __init__(self, value="") -> None:
         self.value = value
@@ -595,6 +603,104 @@ def test_browser_cookie_failure_prompt_switches_to_cookie_file(monkeypatch) -> N
     assert app.changed_to == gui.LOGIN_COOKIE_FILE
     assert app.help_opened is True
     assert warnings
+
+
+def test_url_text_helper_supports_multiline_textbox() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.url_entry = FakeUrlText(" https://www.instagram.com/p/ABC123/\nhttps://www.instagram.com/reel/DEF456/ \n")
+
+    assert gui.InsEagleSyncApp._get_url_text(app) == (
+        "https://www.instagram.com/p/ABC123/\nhttps://www.instagram.com/reel/DEF456/"
+    )
+
+
+def test_post_mode_multiple_urls_open_parent_unknown_staging_dir(project_tmp_path) -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.url_entry = FakeUrlText("https://www.instagram.com/p/ABC123/\nhttps://www.instagram.com/reel/DEF456/")
+    app.config = SimpleNamespace(staging_dir=project_tmp_path / "staging")
+    app.mode = FakeChoice(gui.MODE_POST)
+
+    assert gui.InsEagleSyncApp._target_staging_dir(app) == project_tmp_path / "staging" / "unknown"
+
+
+def test_run_sync_task_uses_multi_post_service_for_post_mode(project_tmp_path) -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.url_entry = FakeUrlText("https://www.instagram.com/p/ABC123/?img_index=1\nhttps://www.instagram.com/reel/DEF456/")
+    app.folder_path_entry = FakeEntry()
+    app.folder_path_entry.insert(0, "Instagram/posts")
+    app.config = SimpleNamespace(eagle_api_base="http://localhost:41595")
+    app.mode = FakeChoice(gui.MODE_POST)
+    app.selected_folder_id = None
+    app.dry_run_var = FakeChoice(False)
+    app.force_var = FakeChoice(False)
+    app.verify_var = FakeChoice(False)
+    app.show_annotation_var = FakeChoice(False)
+    app.ignore_archive_var = FakeChoice(True)
+    app.cancel_event = SimpleNamespace(is_set=lambda: False)
+    app._ensure_storage_parent_configured = lambda: True
+    app._warn_about_cookies = lambda: None
+    app._queue_log = lambda _message: None
+    app._append_log = lambda _message: None
+    started = []
+    app._start_worker = lambda label, task: started.append((label, task()))
+
+    with patch("ins_eagle_sync.gui.services.sync_posts", return_value={"ok": True, "messages": []}) as service_mock:
+        gui.InsEagleSyncApp._run_sync_task(app, force_dry_run=False)
+
+    assert started[0][0] == "同步"
+    assert service_mock.call_args.args[1] == (
+        "https://www.instagram.com/p/ABC123/\nhttps://www.instagram.com/reel/DEF456/"
+    )
+    assert service_mock.call_args.kwargs["folder_path"] == "Instagram/posts"
+    assert service_mock.call_args.kwargs["ignore_archive"] is True
+    assert service_mock.call_args.kwargs["cancel_event"] is app.cancel_event
+
+
+def test_stop_sync_sets_cancel_event_and_disables_stop_button() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.worker = SimpleNamespace(is_alive=lambda: True)
+    app.cancelled = False
+    app.cancel_event = SimpleNamespace(set=lambda: setattr(app, "cancelled", True))
+    app.stop_button = FakeNavButton()
+    logs = []
+    app._append_log = logs.append
+
+    gui.InsEagleSyncApp.stop_sync(app)
+
+    assert app.cancelled is True
+    assert app.stop_button.configures[-1]["state"] == "disabled"
+    assert any("停止" in message for message in logs)
+
+
+def test_stop_button_uses_danger_style_while_running() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    for name in (
+        "preview_button",
+        "sync_button",
+        "browse_folder_button",
+        "folder_button",
+        "open_staging_button",
+        "open_config_button",
+        "open_readme_button",
+        "clear_log_button",
+        "copy_log_button",
+        "scan_profiles_button",
+        "test_login_button",
+        "save_settings_button",
+        "reload_settings_button",
+    ):
+        setattr(app, name, FakeNavButton())
+    app.stop_button = FakeNavButton()
+
+    gui.InsEagleSyncApp._set_controls_enabled(app, False)
+
+    assert app.stop_button.configures[-1]["state"] == "normal"
+    assert app.stop_button.configures[-1]["fg_color"] == gui.COLORS["danger"]
+
+    gui.InsEagleSyncApp._set_controls_enabled(app, True)
+
+    assert app.stop_button.configures[-1]["state"] == "disabled"
+    assert app.stop_button.configures[-1]["fg_color"] == gui.COLORS["surface_3"]
 
 
 def test_window_icon_missing_does_not_crash(monkeypatch, project_tmp_path) -> None:

@@ -58,7 +58,7 @@ from .ui_theme import (
     SPACE,
     TEXTBOX_STYLE,
 )
-from .utils import InstagramMode, detect_instagram_url
+from .utils import InstagramMode, detect_instagram_url, normalize_instagram_post_urls, split_instagram_url_text
 
 
 DEFAULT_CONFIG_PATH = "config.json"
@@ -103,6 +103,7 @@ STATUS_READY = "就绪"
 STATUS_RUNNING = "运行中"
 STATUS_DONE = "完成"
 STATUS_FAILED = "失败"
+STATUS_CANCELLED = "已停止"
 LOG_PANEL_TITLE = "运行日志"
 SHOW_BROWSER_COOKIE_HELP = "__SHOW_BROWSER_COOKIE_HELP__"
 FOLDER_DISPLAY_ICON = ""
@@ -225,6 +226,7 @@ class InsEagleSyncApp(_BaseWindow):
         self.log_panel_visible = True
         self._is_resizing = False
         self._resize_after_id: str | None = None
+        self.cancel_event = threading.Event()
         self._resize_debug_enabled = os.environ.get("INS_EAGLE_SYNC_RESIZE_DEBUG") == "1"
         self.resize_debug_stats = {
             "root_configure_events": 0,
@@ -530,11 +532,27 @@ class InsEagleSyncApp(_BaseWindow):
         ctk.CTkLabel(source, text="Instagram 链接", text_color=COLORS["text"], font=FONTS["label"]).grid(
             row=1, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
         )
-        self.url_entry = self._entry(source, placeholder="粘贴 Instagram 帖子链接、Reels 链接或作者主页链接…")
-        self.url_entry.grid(row=2, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["md"]), sticky="ew")
+        self.url_entry = ctk.CTkTextbox(
+            source,
+            height=76,
+            fg_color=COLORS["input"],
+            border_color=COLORS["border"],
+            border_width=1,
+            text_color=COLORS["text"],
+            corner_radius=RADIUS["control"],
+            font=FONTS["body"],
+            wrap="word",
+        )
+        self.url_entry.grid(row=2, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="ew")
+        ctk.CTkLabel(
+            source,
+            text="单帖模式可粘贴多个帖子 / Reel / TV 链接：一行一个，也支持空格、逗号分隔。作者主页模式只填一个作者主页链接。",
+            text_color=COLORS["text_muted"],
+            font=FONTS["small"],
+        ).grid(row=3, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["md"]), sticky="w")
 
         ctk.CTkLabel(source, text="同步类型", text_color=COLORS["text"], font=FONTS["label"]).grid(
-            row=3, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w"
+            row=4, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w"
         )
         self.mode = ctk.CTkSegmentedButton(
             source,
@@ -543,10 +561,10 @@ class InsEagleSyncApp(_BaseWindow):
             height=30,
             **SEGMENTED_STYLE,
         )
-        self.mode.grid(row=3, column=1, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="ew")
+        self.mode.grid(row=4, column=1, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="ew")
 
         self.author_options_slot = ctk.CTkFrame(source, fg_color="transparent", height=158)
-        self.author_options_slot.grid(row=4, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="ew")
+        self.author_options_slot.grid(row=5, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="ew")
         self.author_options_slot.grid_columnconfigure(0, weight=1)
         try:
             self.author_options_slot.grid_propagate(False)
@@ -697,22 +715,25 @@ class InsEagleSyncApp(_BaseWindow):
             border_width=1,
             border_color=COLORS["border"],
         )
-        actions.grid(row=5, column=0, sticky="ew", padx=SPACE["md"], pady=(0, SPACE["lg"]))
-        for column in range(6):
+        actions.grid(row=0, column=0, sticky="ew", padx=SPACE["md"], pady=(SPACE["md"], SPACE["sm"]))
+        for column in range(7):
             actions.grid_columnconfigure(column, weight=1)
 
         self.sync_button = self._button(actions, "开始同步", self.start_sync, kind="primary", width=140)
         self.sync_button.grid(row=0, column=0, padx=(SPACE["md"], SPACE["sm"]), pady=SPACE["md"], sticky="ew")
+        self.stop_button = self._button(actions, "停止", self.stop_sync, width=88)
+        self.stop_button.grid(row=0, column=1, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.stop_button.configure(state="disabled")
         self.preview_button = self._button(actions, "预览", self.preview, width=100)
-        self.preview_button.grid(row=0, column=1, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.preview_button.grid(row=0, column=2, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
         self.folder_button = self._button(actions, "检查 Eagle 文件夹", self.ensure_folder, width=140)
-        self.folder_button.grid(row=0, column=2, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.folder_button.grid(row=0, column=3, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
         self.open_staging_button = self._button(actions, "打开缓存目录", self.open_staging_dir, width=128)
-        self.open_staging_button.grid(row=0, column=3, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.open_staging_button.grid(row=0, column=4, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
         self.open_config_button = self._button(actions, "打开配置目录", self.open_config_dir, width=128)
-        self.open_config_button.grid(row=0, column=4, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.open_config_button.grid(row=0, column=5, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
         self.open_readme_button = self._button(actions, "打开说明", self.open_readme, width=110)
-        self.open_readme_button.grid(row=0, column=5, padx=(SPACE["sm"], SPACE["md"]), pady=SPACE["md"], sticky="ew")
+        self.open_readme_button.grid(row=0, column=6, padx=(SPACE["sm"], SPACE["md"]), pady=SPACE["md"], sticky="ew")
 
     def _build_settings_tab(self, parent: Any) -> None:
         if getattr(self, "_settings_tab_built", False):
@@ -1611,7 +1632,8 @@ class InsEagleSyncApp(_BaseWindow):
         if data is None:
             return
         config = parse_config(data)
-        url = self.url_entry.get().strip() or DEFAULT_LOGIN_TEST_URL
+        url_values = split_instagram_url_text(self._get_url_text())
+        url = url_values[0] if url_values else DEFAULT_LOGIN_TEST_URL
 
         def task() -> dict[str, Any]:
             messages = run_instagram_login_check(config, url)
@@ -1667,6 +1689,17 @@ class InsEagleSyncApp(_BaseWindow):
 
     def start_sync(self) -> None:
         self._run_sync_task(force_dry_run=False)
+
+    def stop_sync(self) -> None:
+        if self.worker is None or not self.worker.is_alive():
+            self._append_log("提示：当前没有正在运行的任务。")
+            return
+        self.cancel_event.set()
+        self._append_log("已请求停止。正在等待当前 gallery-dl 进程退出。")
+        try:
+            self.stop_button.configure(state="disabled")
+        except Exception:  # noqa: BLE001 - test doubles may not expose configure.
+            pass
 
     def choose_sync_eagle_folder(self) -> None:
         self._open_eagle_folder_picker(
@@ -1781,7 +1814,7 @@ class InsEagleSyncApp(_BaseWindow):
     def _run_sync_task(self, *, force_dry_run: bool) -> None:
         if not self._ensure_storage_parent_configured():
             return
-        url = self.url_entry.get().strip()
+        url = self._get_url_text()
         folder_path = self.folder_path_entry.get().strip()
         if not url:
             self._append_log("错误：Instagram 链接不能为空。")
@@ -1796,11 +1829,27 @@ class InsEagleSyncApp(_BaseWindow):
         self._warn_about_cookies()
         dry_run = True if force_dry_run else self.dry_run_var.get()
         mode = self.mode.get()
-        try:
-            normalized_url = detect_instagram_url(url).normalized_url
-        except ValueError as exc:
-            self._append_log(f"错误：{exc}")
-            return
+        normalized_url: str | None = None
+        normalized_post_urls: list[str] = []
+        if mode == MODE_AUTHOR:
+            url_values = split_instagram_url_text(url)
+            if len(url_values) != 1:
+                self._append_log("错误：作者主页模式只能填写一个作者主页链接。")
+                return
+            try:
+                normalized_url = detect_instagram_url(url_values[0]).normalized_url
+            except ValueError as exc:
+                self._append_log(f"错误：{exc}")
+                return
+        else:
+            try:
+                normalized_post_urls = normalize_instagram_post_urls(url)
+            except ValueError as exc:
+                self._append_log(f"错误：{exc}")
+                return
+            if not normalized_post_urls:
+                self._append_log("错误：单帖模式至少需要一个帖子 / Reel / TV 链接。")
+                return
         max_posts: int | None = None
         date_from: str | None = None
         date_to: str | None = None
@@ -1820,21 +1869,28 @@ class InsEagleSyncApp(_BaseWindow):
                 "verify_eagle": self.verify_var.get(),
                 "show_annotation": self.show_annotation_var.get(),
                 "ignore_archive": self.ignore_archive_var.get(),
+                "cancel_event": self.cancel_event,
                 "log": self._queue_log,
             }
             if mode == MODE_AUTHOR:
                 return services.sync_author(
                     self.config,
-                    normalized_url,
+                    normalized_url or "",
                     max_posts=max_posts,
                     date_from=date_from,
                     date_to=date_to,
                     **kwargs,
                 )
-            return services.sync_post(self.config, normalized_url, **kwargs)
+            return services.sync_posts(self.config, "\n".join(normalized_post_urls), **kwargs)
 
         title = "预览" if force_dry_run else "同步"
         self._start_worker(title, task)
+
+    def _get_url_text(self) -> str:
+        try:
+            return self.url_entry.get("1.0", "end").strip()
+        except TypeError:
+            return self.url_entry.get().strip()
 
     def _read_max_posts(self) -> int | None | bool:
         raw = self.max_posts_entry.get().strip()
@@ -1895,16 +1951,26 @@ class InsEagleSyncApp(_BaseWindow):
             return False
 
     def _target_staging_dir(self) -> Path:
-        url = self.url_entry.get().strip()
+        url = self._get_url_text()
         if not url:
             return self.config.staging_dir
 
-        info = detect_instagram_url(url)
         if self.mode.get() == MODE_AUTHOR:
+            url_values = split_instagram_url_text(url)
+            if len(url_values) != 1:
+                raise ValueError("作者主页模式只能填写一个作者主页链接。")
+            info = detect_instagram_url(url_values[0])
             if info.mode != InstagramMode.AUTHOR or not info.username:
                 raise ValueError("作者主页模式需要填写 Instagram 作者主页链接。")
             return self.config.staging_dir / info.username
 
+        normalized_post_urls = normalize_instagram_post_urls(url)
+        if len(normalized_post_urls) > 1:
+            return self.config.staging_dir / "unknown"
+        if not normalized_post_urls:
+            return self.config.staging_dir
+
+        info = detect_instagram_url(normalized_post_urls[0])
         if info.mode != InstagramMode.POST or not info.shortcode:
             raise ValueError("单个帖子模式需要填写 Instagram 帖子或 Reel 链接。")
         return self.config.staging_dir / "unknown" / info.shortcode
@@ -1927,6 +1993,7 @@ class InsEagleSyncApp(_BaseWindow):
             return
 
         self.browser_cookie_help_prompted = False
+        self.cancel_event.clear()
         self._set_controls_enabled(False)
         self._set_status(STATUS_RUNNING)
         self._append_log("")
@@ -1936,8 +2003,14 @@ class InsEagleSyncApp(_BaseWindow):
             done_message = "__TASK_DONE_FAILED__"
             try:
                 result = task()
-                done_message = "__TASK_DONE_OK__" if result.get("ok") else "__TASK_DONE_FAILED__"
-                self._queue_log(f"== {label}结束：{'成功' if result.get('ok') else '失败'} ==")
+                cancelled = bool(result.get("cancelled")) or self.cancel_event.is_set()
+                done_message = (
+                    "__TASK_DONE_CANCELLED__"
+                    if cancelled
+                    else "__TASK_DONE_OK__" if result.get("ok") else "__TASK_DONE_FAILED__"
+                )
+                status_text = "已停止" if cancelled else "成功" if result.get("ok") else "失败"
+                self._queue_log(f"== {label}结束：{status_text} ==")
                 self._queue_summary(result)
             except Exception:
                 self._queue_log("错误：任务运行时发生异常")
@@ -1962,6 +2035,7 @@ class InsEagleSyncApp(_BaseWindow):
             "removed",
             "folder_id",
             "returncode",
+            "cancelled",
         )
         for key in summary_keys:
             if key in result:
@@ -1993,6 +2067,9 @@ class InsEagleSyncApp(_BaseWindow):
             if message == "__TASK_DONE_OK__":
                 self._set_controls_enabled(True)
                 self._set_status(STATUS_DONE)
+            elif message == "__TASK_DONE_CANCELLED__":
+                self._set_controls_enabled(True)
+                self._set_status(STATUS_CANCELLED)
             elif message == "__TASK_DONE_FAILED__":
                 self._set_controls_enabled(True)
                 self._set_status(STATUS_FAILED)
@@ -2084,6 +2161,9 @@ class InsEagleSyncApp(_BaseWindow):
             self.reload_settings_button,
         ):
             button.configure(state=state)
+        if hasattr(self, "stop_button"):
+            stop_style = BUTTON_STYLES["secondary"] if enabled else BUTTON_STYLES["danger"]
+            self.stop_button.configure(state="disabled" if enabled else "normal", **stop_style)
         if enabled:
             self.sync_button.configure(text="开始同步")
         else:
@@ -2096,6 +2176,7 @@ class InsEagleSyncApp(_BaseWindow):
             STATUS_RUNNING: COLORS["primary"],
             STATUS_DONE: COLORS["success"],
             STATUS_FAILED: COLORS["danger"],
+            STATUS_CANCELLED: COLORS["warning"],
         }.get(value, COLORS["text_muted"])
         if hasattr(self, "status_dot"):
             self.status_dot.configure(text_color=color)

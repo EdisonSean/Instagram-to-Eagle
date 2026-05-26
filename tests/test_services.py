@@ -117,6 +117,47 @@ def test_sync_post_service_downloads_then_imports(project_tmp_path):
     assert run_mock.call_args.kwargs["dry_run"] is True
 
 
+def test_sync_posts_service_accepts_multiple_post_urls(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+    logs = []
+
+    with patch(
+        "ins_eagle_sync.services.sync_post",
+        side_effect=[
+            {"ok": True, "messages": [], "total": 1, "skipped": 0, "imported": 1, "failed": 0, "failures": []},
+            {"ok": True, "messages": [], "total": 2, "skipped": 1, "imported": 1, "failed": 0, "failures": []},
+        ],
+    ) as sync_mock:
+        result = services.sync_posts(
+            config,
+            "https://www.instagram.com/p/ABC123/?img_index=1\n"
+            "https://www.instagram.com/reel/DEF456/, https://www.instagram.com/p/ABC123/",
+            folder_path="Instagram/posts",
+            dry_run=True,
+            log=logs.append,
+        )
+
+    assert result["ok"] is True
+    assert result["total"] == 3
+    assert result["skipped"] == 1
+    assert result["imported"] == 2
+    assert sync_mock.call_count == 2
+    assert sync_mock.call_args_list[0].args[1] == "https://www.instagram.com/p/ABC123/"
+    assert sync_mock.call_args_list[1].args[1] == "https://www.instagram.com/reel/DEF456/"
+    assert sync_mock.call_args_list[0].kwargs["folder_path"] == "Instagram/posts"
+    assert any("共 2 个帖子链接" in message for message in logs)
+
+
+def test_sync_posts_service_rejects_author_urls(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+
+    result = services.sync_posts(config, "https://www.instagram.com/quinn.xyz/", folder_id="folder-1")
+
+    assert result["ok"] is False
+    assert result["failed"] == 1
+    assert "Single-post mode" in "\n".join(result["messages"])
+
+
 def test_sync_author_service_passes_max_posts(project_tmp_path):
     config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
     request = SimpleNamespace(target_dir=project_tmp_path / "staging" / "quinn.xyz")

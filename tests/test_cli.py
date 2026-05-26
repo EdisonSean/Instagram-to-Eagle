@@ -258,7 +258,7 @@ def test_sync_post_calls_service(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
 
-    with patch("ins_eagle_sync.cli.services.sync_post", return_value={"ok": True, "messages": []}) as service_mock:
+    with patch("ins_eagle_sync.cli.services.sync_posts", return_value={"ok": True, "messages": []}) as service_mock:
         exit_code = main(
             [
                 "--config",
@@ -275,7 +275,7 @@ def test_sync_post_calls_service(project_tmp_path):
         )
 
     assert exit_code == 0
-    assert service_mock.call_args.args[1] == "https://www.instagram.com/p/ABC123/"
+    assert service_mock.call_args.args[1] == "https://www.instagram.com/p/ABC123/?img_index=1"
     assert service_mock.call_args.kwargs["folder_path"] == "Instagram/quinn.xyz"
     assert service_mock.call_args.kwargs["dry_run"] is True
     assert service_mock.call_args.kwargs["verify_eagle"] is True
@@ -283,12 +283,33 @@ def test_sync_post_calls_service(project_tmp_path):
     assert service_mock.call_args.kwargs["verbose_gallery_dl"] is True
 
 
+def test_sync_post_cli_accepts_multiple_post_urls(project_tmp_path):
+    config_path = project_tmp_path / "config.json"
+    write_test_config(config_path, project_tmp_path)
+
+    with patch("ins_eagle_sync.cli.services.sync_posts", return_value={"ok": True, "messages": []}) as service_mock:
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "sync-post",
+                "https://www.instagram.com/p/ABC123/",
+                "https://www.instagram.com/reel/DEF456/",
+                "--folder-id",
+                "folder-1",
+            ]
+        )
+
+    assert exit_code == 0
+    assert service_mock.call_args.args[1] == "https://www.instagram.com/p/ABC123/ https://www.instagram.com/reel/DEF456/"
+
+
 def test_sync_post_returns_gallery_dl_failure_code(project_tmp_path):
     config_path = project_tmp_path / "config.json"
     write_test_config(config_path, project_tmp_path)
 
     with patch(
-        "ins_eagle_sync.cli.services.sync_post",
+        "ins_eagle_sync.cli.services.sync_posts",
         return_value={"ok": False, "returncode": 4, "messages": []},
     ):
         exit_code = main(
