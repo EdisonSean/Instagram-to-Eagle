@@ -32,6 +32,17 @@ class FakeEntry:
         return self.value
 
 
+class FakeChoice:
+    def __init__(self, value="") -> None:
+        self.value = value
+
+    def set(self, value) -> None:
+        self.value = value
+
+    def get(self):
+        return self.value
+
+
 class FakeFrame:
     def __init__(self) -> None:
         self.visible = True
@@ -82,7 +93,9 @@ class FakeCanvas:
         self.ovals: list[tuple] = []
         self.scrollregion = None
         self.scroll_calls: list[tuple[int, str]] = []
+        self.moveto_calls: list[float] = []
         self.bindings = {}
+        self.bbox_value = (0, 0, width, 1000)
 
     def delete(self, target) -> None:
         self.rectangles.clear()
@@ -114,23 +127,112 @@ class FakeCanvas:
     def yview_scroll(self, amount, units):
         self.scroll_calls.append((amount, units))
 
+    def yview_moveto(self, fraction):
+        value = float(fraction)
+        self.moveto_calls.append(value)
+        self.y = value * max(self.bbox_value[3], 1)
+
     def yview(self, *args):
         return None
+
+    def bbox(self, target):
+        return self.bbox_value
+
+    def winfo_reqheight(self):
+        return self.bbox_value[3]
 
     def bind(self, event, callback) -> None:
         self.bindings[event] = callback
 
 
 class FakeWidget:
-    def __init__(self, children=None) -> None:
+    def __init__(self, children=None, *, y=0, master=None, height=100) -> None:
         self.bindings = {}
         self.children = list(children or [])
+        self.y = y
+        self.master = master
+        self.height = height
+        self.options = {"border_color": gui.COLORS["border"], "border_width": 1}
+        self.configures: list[dict] = []
 
     def bind(self, event, callback) -> None:
         self.bindings[event] = callback
 
     def winfo_children(self):
         return self.children
+
+    def winfo_y(self):
+        return self.y
+
+    def winfo_height(self):
+        return self.height
+
+    def winfo_reqheight(self):
+        return self.height
+
+    def cget(self, key):
+        return self.options.get(key)
+
+    def configure(self, **kwargs) -> None:
+        self.options.update(kwargs)
+        self.configures.append(kwargs)
+
+
+class FakeNavButton:
+    def __init__(self) -> None:
+        self.configures: list[dict] = []
+
+    def configure(self, **kwargs) -> None:
+        self.configures.append(kwargs)
+
+
+class FakeWindow:
+    def __init__(self, screen_width=1920, screen_height=1080) -> None:
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+        self.geometry_value = ""
+        self.destroyed = False
+
+    def update_idletasks(self) -> None:
+        pass
+
+    def winfo_screenwidth(self):
+        return self.screen_width
+
+    def winfo_screenheight(self):
+        return self.screen_height
+
+    def geometry(self, value) -> None:
+        self.geometry_value = value
+
+    def withdraw(self) -> None:
+        pass
+
+    def title(self, value) -> None:
+        self.title_value = value
+
+    def transient(self, parent) -> None:
+        self.parent = parent
+
+    def attributes(self, *args) -> None:
+        self.attributes_value = args
+
+    def deiconify(self) -> None:
+        pass
+
+    def lift(self) -> None:
+        pass
+
+    def destroy(self) -> None:
+        self.destroyed = True
+
+
+class RaisingBuildParent:
+    def grid_columnconfigure(self, *args, **kwargs) -> None:
+        raise AssertionError("builder should not touch parent when already built")
+
+    def grid_rowconfigure(self, *args, **kwargs) -> None:
+        raise AssertionError("builder should not touch parent when already built")
 
 
 class FakeScrollableFrame:
@@ -447,6 +549,66 @@ def test_no_login_settings_disable_cookies(project_tmp_path) -> None:
     assert loaded.cookies.file is None
 
 
+def test_default_login_mode_is_no_login() -> None:
+    method, browser_label, profile = gui.get_login_form_values(gui.default_config_data())
+
+    assert method == gui.LOGIN_NONE
+    assert browser_label == "Chrome"
+    assert profile == "Default"
+
+
+def test_center_window_uses_screen_center() -> None:
+    window = FakeWindow(screen_width=1920, screen_height=1080)
+
+    gui.center_window(window, 680, 420)
+
+    assert window.geometry_value == "680x420+620+330"
+
+
+def test_centered_warning_uses_centered_host(monkeypatch) -> None:
+    host = FakeWindow(screen_width=1920, screen_height=1080)
+    calls = []
+
+    monkeypatch.setattr(gui.tk, "Toplevel", lambda parent: host)
+    monkeypatch.setattr(gui.messagebox, "showwarning", lambda **kwargs: calls.append(kwargs))
+
+    gui.show_centered_warning(object(), "标题", "内容")
+
+    assert host.geometry_value == "1x1+959+539"
+    assert host.destroyed is True
+    assert calls[0]["parent"] is host
+
+
+def test_browser_cookie_failure_prompt_switches_to_cookie_file(monkeypatch) -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.login_method = FakeChoice(gui.LOGIN_BROWSER)
+    app.changed_to = None
+    app.help_opened = False
+    app._login_method_changed = lambda value: setattr(app, "changed_to", value)
+    app.show_cookie_help = lambda: setattr(app, "help_opened", True)
+    warnings = []
+    monkeypatch.setattr(gui, "show_centered_warning", lambda *args: warnings.append(args))
+
+    gui.InsEagleSyncApp._show_browser_cookie_help_prompt(app)
+
+    assert app.login_method.get() == gui.LOGIN_COOKIE_FILE
+    assert app.changed_to == gui.LOGIN_COOKIE_FILE
+    assert app.help_opened is True
+    assert warnings
+
+
+def test_window_icon_missing_does_not_crash(monkeypatch, project_tmp_path) -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.icon_status_message = None
+    app.iconbitmap = lambda _path: None
+    missing_icon = project_tmp_path / "missing.ico"
+    monkeypatch.setattr(gui, "get_resource_path", lambda _relative: missing_icon)
+
+    gui.InsEagleSyncApp._set_window_icon(app)
+
+    assert "未找到应用图标" in app.icon_status_message
+
+
 def test_scan_chrome_profiles_finds_cookie_databases(project_tmp_path) -> None:
     user_data = project_tmp_path / "Google" / "Chrome" / "User Data"
     (user_data / "Default" / "Network").mkdir(parents=True)
@@ -620,6 +782,8 @@ def test_startup_checks_hide_cookie_path_and_mock_external_checks(project_tmp_pa
 
     with (
         patch("ins_eagle_sync.gui.EagleClient", return_value=fake_eagle),
+        patch("ins_eagle_sync.gui.resolve_gallery_dl_command", return_value=["py", "-m", "gallery_dl"]),
+        patch("ins_eagle_sync.gui.resolve_ytdlp_command", return_value=["py", "-m", "yt_dlp"]),
         patch("ins_eagle_sync.gui.subprocess.run", return_value=completed),
     ):
         messages = gui.run_startup_checks(config)
@@ -628,7 +792,48 @@ def test_startup_checks_hide_cookie_path_and_mock_external_checks(project_tmp_pa
     assert str(cookie_path) not in joined
     assert "<hidden>" in joined
     assert "Eagle 本地 API 可以连接" in joined
-    assert "gallery-dl 可用" in joined
+    assert "gallery-dl Python 模块可用" in joined
+
+
+def test_startup_checks_report_packaged_gallery_and_optional_ytdlp(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    gui.write_config_data(gui.default_config_data(), config_path)
+    config = load_config(config_path)
+    fake_eagle = type("FakeEagle", (), {"check_app_available": lambda self: True})()
+    gallery_exe = project_tmp_path / "tools" / "gallery-dl.exe"
+    gallery_exe.parent.mkdir()
+    gallery_exe.write_bytes(b"")
+
+    with (
+        patch("ins_eagle_sync.gui.EagleClient", return_value=fake_eagle),
+        patch("ins_eagle_sync.gui.resolve_gallery_dl_command", return_value=[str(gallery_exe)]),
+        patch("ins_eagle_sync.gui.resolve_ytdlp_command", return_value=None),
+        patch("ins_eagle_sync.gui.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="1.29.0\n", stderr="")),
+    ):
+        messages = gui.run_startup_checks(config)
+
+    joined = "\n".join(messages)
+    assert "已找到内置 gallery-dl.exe" in joined
+    assert "未找到 yt-dlp" in joined
+
+
+def test_startup_checks_report_bundled_gallery_module(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    gui.write_config_data(gui.default_config_data(), config_path)
+    config = load_config(config_path)
+    fake_eagle = type("FakeEagle", (), {"check_app_available": lambda self: True})()
+    internal_command = [str(project_tmp_path / "Instagram to Eagle.exe"), gui.FROZEN_GALLERY_DL_MODULE_ARG]
+
+    with (
+        patch("ins_eagle_sync.gui.EagleClient", return_value=fake_eagle),
+        patch("ins_eagle_sync.gui.resolve_gallery_dl_command", return_value=internal_command),
+        patch("ins_eagle_sync.gui.resolve_ytdlp_command", return_value=None),
+        patch("ins_eagle_sync.gui.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="1.32.1\n", stderr="")),
+    ):
+        messages = gui.run_startup_checks(config)
+
+    joined = "\n".join(messages)
+    assert "已内置 gallery-dl Python 模块" in joined
 
 
 def test_gallery_dl_check_failure_is_nonfatal() -> None:
@@ -668,6 +873,52 @@ def test_log_queue_flushes_in_batches_and_trims() -> None:
     assert after_calls[0][0] == gui.LOG_FLUSH_INTERVAL_MS
 
 
+def test_resize_defers_log_queue_flush() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app._is_resizing = True
+    app._resize_debug_enabled = True
+    app.resize_debug_stats = {"root_configure_events": 0, "log_flush_deferred": 0}
+    app.log_queue = queue.Queue()
+    app.log_queue.put("line")
+    app.log_text = FakeTextBox()
+    after_calls = []
+    app.after = lambda delay, callback: after_calls.append((delay, callback))
+
+    gui.InsEagleSyncApp._drain_log_queue(app)
+
+    assert app.log_text.lines == []
+    assert app.log_queue.qsize() == 1
+    assert app.resize_debug_stats["log_flush_deferred"] == 1
+    assert after_calls[0][0] == gui.LOG_FLUSH_RESIZE_DELAY_MS
+
+
+def test_root_configure_only_debounces_resize_state() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app._resize_debug_enabled = True
+    app.resize_debug_stats = {"root_configure_events": 0, "log_flush_deferred": 0}
+    app._resize_after_id = "old"
+    cancelled = []
+    scheduled = []
+    app.after_cancel = lambda after_id: cancelled.append(after_id)
+    app.after = lambda delay, callback: scheduled.append((delay, callback)) or "new"
+
+    gui.InsEagleSyncApp._on_root_configure(app, SimpleNamespace(widget=app))
+
+    assert app._is_resizing is True
+    assert app.resize_debug_stats["root_configure_events"] == 1
+    assert cancelled == ["old"]
+    assert scheduled[0][0] == gui.RESIZE_IDLE_DEBOUNCE_MS
+
+
+def test_tab_builders_are_guarded_against_duplicate_builds() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app._sync_tab_built = True
+    app._settings_tab_built = True
+
+    gui.InsEagleSyncApp._build_sync_tab(app, RaisingBuildParent())
+    gui.InsEagleSyncApp._build_settings_tab(app, RaisingBuildParent())
+
+
 def test_main_scrollable_frame_mousewheel_uses_larger_step() -> None:
     app = object.__new__(gui.InsEagleSyncApp)
     frame = FakeScrollableFrame()
@@ -689,6 +940,100 @@ def test_main_scrollable_frame_child_mousewheel_uses_same_step() -> None:
 
     assert result == "break"
     assert frame._parent_canvas.scroll_calls == [(gui.MAIN_SCROLL_UNITS_PER_WHEEL, "units")]
+
+
+def test_settings_section_scroll_helper_updates_highlight() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    canvas = FakeCanvas(height=400, y=0)
+    canvas.bbox_value = (0, 0, 600, 1200)
+    app.settings_tab = SimpleNamespace(_parent_canvas=canvas)
+    app.settings_nav_after_id = None
+    app.after = lambda _delay, callback: callback()
+    app.after_cancel = lambda _after_id: None
+    app.update_idletasks = lambda: None
+    content = FakeWidget(y=0)
+    instagram = FakeWidget(y=160, master=content)
+    storage = FakeWidget(y=520, master=content)
+    proxy = FakeWidget(y=840, master=content)
+    app.settings_content_frame = content
+    app.settings_nav_order = (
+        ("instagram", "Instagram 登录"),
+        ("storage", "下载与缓存"),
+        ("proxy", "代理设置"),
+    )
+    app.settings_section_widgets = {
+        "instagram": instagram,
+        "storage": storage,
+        "proxy": proxy,
+    }
+    app.settings_nav_buttons = {key: FakeNavButton() for key, _label in app.settings_nav_order}
+
+    gui.InsEagleSyncApp._scroll_settings_to_section(app, "storage")
+
+    assert canvas.moveto_calls
+    assert app.settings_nav_buttons["storage"].configures[-1]["fg_color"] == gui.COLORS["selection"]
+
+    canvas.y = 850
+    gui.InsEagleSyncApp._update_settings_nav_from_scroll(app)
+
+    assert app.settings_nav_buttons["proxy"].configures[-1]["fg_color"] == gui.COLORS["selection"]
+
+
+def test_settings_section_active_helper_uses_bottom_section_when_scrolled_to_end() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    canvas = FakeCanvas(height=400, y=800)
+    canvas.bbox_value = (0, 0, 600, 1200)
+    app.settings_tab = SimpleNamespace(_parent_canvas=canvas)
+    app.settings_nav_after_id = None
+    content = FakeWidget(y=0)
+    instagram = FakeWidget(y=160, master=content, height=260)
+    storage = FakeWidget(y=520, master=content, height=180)
+    eagle = FakeWidget(y=740, master=content, height=380)
+    proxy = FakeWidget(y=180, master=eagle, height=150)
+    app.settings_content_frame = content
+    app.settings_nav_order = (
+        ("instagram", "Instagram"),
+        ("storage", "Storage"),
+        ("eagle", "Eagle"),
+        ("proxy", "Proxy"),
+    )
+    app.settings_section_widgets = {
+        "instagram": instagram,
+        "storage": storage,
+        "eagle": eagle,
+        "proxy": proxy,
+    }
+
+    active = gui.InsEagleSyncApp._settings_active_section_key(app)
+
+    assert active == "proxy"
+
+
+def test_settings_nav_update_is_noop_without_left_preferences_nav() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.settings_nav_buttons = {}
+    app.settings_nav_after_id = None
+    app.after = lambda _delay, _callback: (_ for _ in ()).throw(AssertionError("no nav update expected"))
+
+    gui.InsEagleSyncApp._schedule_settings_nav_update(app)
+
+    assert app.settings_nav_after_id is None
+
+
+def test_settings_section_flash_uses_primary_border_then_restores() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    target = FakeWidget()
+    app.settings_section_widgets = {"storage": target}
+    callbacks = []
+    app.after = lambda _delay, callback: callbacks.append(callback)
+
+    gui.InsEagleSyncApp._flash_settings_section(app, "storage")
+
+    assert target.configures[-1]["border_color"] == gui.COLORS["primary_soft"]
+    callbacks[0]()
+    assert target.configures[-1]["border_color"] == gui.COLORS["primary"]
+    callbacks[-1]()
+    assert target.configures[-1]["border_color"] == gui.COLORS["border"]
 
 
 def test_folder_picker_search_debounce_is_200ms() -> None:

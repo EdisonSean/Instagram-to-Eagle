@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import queue
-import shlex
 import subprocess
 import threading
 import traceback
@@ -21,11 +20,44 @@ except ImportError:  # pragma: no cover - runtime dependency hint for GUI users.
     ctk = None  # type: ignore[assignment]
 
 from . import services
-from .config import AppConfig, load_config, parse_config
+from .config import (
+    FROZEN_GALLERY_DL_MODULE_ARG,
+    GALLERY_DL_EXE_NAME,
+    YT_DLP_EXE_NAME,
+    AppConfig,
+    load_config,
+    parse_config,
+    resolve_gallery_dl_command,
+    resolve_ytdlp_command,
+    split_command,
+)
 from .eagle_client import EagleClient
 from .gallerydl_runner import build_cookie_args, build_subprocess_env, format_command_for_log, is_browser_cookie_error
 from .proxy_utils import detect_system_proxy, normalize_proxy_url, proxy_mode_label
-from .ui_theme import APP_TITLE, BUTTON_HEIGHT, COLORS, FONTS, INPUT_HEIGHT, RADIUS, SPACE
+from .runtime import (
+    APP_ICON_RELATIVE_PATH,
+    get_resource_path,
+    get_runtime_config_path,
+    get_runtime_example_config_path,
+    get_runtime_readme_path,
+    is_frozen,
+)
+from .ui_theme import (
+    APP_TITLE,
+    BUTTON_HEIGHT,
+    BUTTON_STYLES,
+    CHECKBOX_STYLE,
+    COLORS,
+    COMBOBOX_STYLE,
+    ENTRY_STYLE,
+    FONTS,
+    INPUT_HEIGHT,
+    RADIUS,
+    SCROLLBAR_STYLE,
+    SEGMENTED_STYLE,
+    SPACE,
+    TEXTBOX_STYLE,
+)
 from .utils import InstagramMode, detect_instagram_url
 
 
@@ -72,7 +104,8 @@ STATUS_RUNNING = "运行中"
 STATUS_DONE = "完成"
 STATUS_FAILED = "失败"
 LOG_PANEL_TITLE = "运行日志"
-FOLDER_DISPLAY_ICON = "📁"
+SHOW_BROWSER_COOKIE_HELP = "__SHOW_BROWSER_COOKIE_HELP__"
+FOLDER_DISPLAY_ICON = ""
 FOLDER_ROW_HEIGHT = 34
 FOLDER_INDENT = 24
 FOLDER_ARROW_WIDTH = 34
@@ -82,9 +115,21 @@ LOG_BATCH_LIMIT = 300
 FOLDER_SEARCH_DEBOUNCE_MS = 200
 TREE_RENDER_BUFFER_ROWS = 4
 MAIN_SCROLL_UNITS_PER_WHEEL = 75
+SETTINGS_SCROLL_TOP_PADDING = 36
+RESIZE_IDLE_DEBOUNCE_MS = 220
+LOG_FLUSH_RESIZE_DELAY_MS = 180
+LOG_PANEL_WIDTH = 430
+SETTINGS_SECTION_FLASH_STEPS = (
+    (0, "primary_soft"),
+    (120, "primary"),
+    (260, "primary_hover"),
+    (430, "primary"),
+    (620, "primary_soft"),
+)
 
 DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "gallery_dl_executable": "py -m gallery_dl",
+    "yt_dlp_executable": "",
     STORAGE_PARENT_KEY: "",
     "staging_dir": "E:/INS_Eagle_Sync/_staging",
     "archive_db": "E:/INS_Eagle_Sync/_cache/gallery-dl-archive.sqlite3",
@@ -116,18 +161,77 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
 _BaseWindow = ctk.CTk if ctk is not None else object
 
 
+def center_window(window: Any, width: int, height: int) -> None:
+    try:
+        window.update_idletasks()
+        screen_width = int(window.winfo_screenwidth())
+        screen_height = int(window.winfo_screenheight())
+    except Exception:  # noqa: BLE001 - fallback keeps the requested size.
+        window.geometry(f"{width}x{height}")
+        return
+
+    x = max(0, (screen_width - width) // 2)
+    y = max(0, (screen_height - height) // 2)
+    window.geometry(f"{width}x{height}+{x}+{y}")
+
+
+def show_centered_info(parent: Any, title: str, message: str) -> None:
+    show_centered_message(parent, "info", title, message)
+
+
+def show_centered_warning(parent: Any, title: str, message: str) -> None:
+    show_centered_message(parent, "warning", title, message)
+
+
+def show_centered_message(parent: Any, kind: str, title: str, message: str) -> None:
+    host = None
+    try:
+        host = tk.Toplevel(parent)
+        host.withdraw()
+        host.title(title)
+        center_window(host, 1, 1)
+        host.transient(parent)
+        try:
+            host.attributes("-alpha", 0.0)
+        except Exception:  # noqa: BLE001 - alpha is not guaranteed for all Tk builds.
+            pass
+        host.deiconify()
+        host.lift()
+        options = {"title": title, "message": message, "parent": host}
+        if kind == "warning":
+            messagebox.showwarning(**options)
+        else:
+            messagebox.showinfo(**options)
+    finally:
+        if host is not None:
+            try:
+                host.destroy()
+            except Exception:  # noqa: BLE001 - best-effort cleanup for UI helpers.
+                pass
+
+
 class InsEagleSyncApp(_BaseWindow):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
         self.geometry("1500x900")
-        self.minsize(1160, 740)
+        self.minsize(1440, 800)
         self.configure(fg_color=COLORS["window"])
+        self.icon_status_message: str | None = None
+        self._set_window_icon()
 
-        self.log_queue: queue.Queue[str] = queue.Queue()
+        self.log_queue: queue.Queue[object] = queue.Queue()
         self.log_line_count = 0
         self.log_panel_visible = True
+        self._is_resizing = False
+        self._resize_after_id: str | None = None
+        self._resize_debug_enabled = os.environ.get("INS_EAGLE_SYNC_RESIZE_DEBUG") == "1"
+        self.resize_debug_stats = {
+            "root_configure_events": 0,
+            "log_flush_deferred": 0,
+        }
         self.worker: threading.Thread | None = None
+        self.browser_cookie_help_prompted = False
         self.setting_entries: dict[str, Any] = {}
         self.status_var = ctk.StringVar(value=STATUS_READY)
         self.proxy_detect_result_var = ctk.StringVar(value="当前检测结果：未检测")
@@ -140,106 +244,106 @@ class InsEagleSyncApp(_BaseWindow):
             "archive_db": ctk.StringVar(value="未设置"),
             "imported_state": ctk.StringVar(value="未设置"),
         }
-        self.config_path = ensure_config_file(DEFAULT_CONFIG_PATH, EXAMPLE_CONFIG_PATH)
+        try:
+            self.config_path = ensure_config_file(get_runtime_config_path(), get_runtime_example_config_path())
+        except Exception as exc:  # noqa: BLE001 - startup must explain configuration write failures.
+            show_centered_warning(self, "配置文件不可用", str(exc))
+            raise
         self.config_data = load_config_data(self.config_path)
         self.config = self._load_config()
 
         self._build_layout()
         self._set_default_values()
+        self.bind("<Configure>", self._on_root_configure, add="+")
         self.after(LOG_FLUSH_INTERVAL_MS, self._drain_log_queue)
         self.after(250, self.startup_checks)
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=0)
+        self.grid_columnconfigure(1, weight=0, minsize=LOG_PANEL_WIDTH)
         self.grid_rowconfigure(1, weight=1)
 
         self._build_header()
 
         self.main_panel = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_panel.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 12))
+        self.main_panel.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=(0, 10))
         self.main_panel.grid_columnconfigure(0, weight=1)
         self.main_panel.grid_rowconfigure(0, weight=1)
 
         self.sync_tab = ctk.CTkScrollableFrame(
             self.main_panel,
             fg_color=COLORS["surface"],
-            scrollbar_button_color=COLORS["surface_3"],
-            scrollbar_button_hover_color=COLORS["primary"],
             corner_radius=RADIUS["card"],
+            **SCROLLBAR_STYLE,
         )
-        self.settings_tab = ctk.CTkScrollableFrame(
+        self.settings_tab = ctk.CTkFrame(
             self.main_panel,
             fg_color=COLORS["surface"],
-            scrollbar_button_color=COLORS["surface_3"],
-            scrollbar_button_hover_color=COLORS["primary"],
             corner_radius=RADIUS["card"],
         )
         for frame in (self.sync_tab, self.settings_tab):
             frame.grid(row=0, column=0, sticky="nsew")
             frame.grid_columnconfigure(0, weight=1)
-            self._bind_scrollable_frame_mousewheel(frame)
 
         self._build_sync_tab(self.sync_tab)
         self._build_settings_tab(self.settings_tab)
         self._bind_scrollable_frame_mousewheel(self.sync_tab)
-        self._bind_scrollable_frame_mousewheel(self.settings_tab)
         self._show_main_tab(SYNC_TAB_NAME)
         self._build_log_panel()
+        self._build_status_bar()
 
+    def _set_window_icon(self) -> None:
+        icon_path = get_resource_path(APP_ICON_RELATIVE_PATH)
+        if not icon_path.exists():
+            self.icon_status_message = "提示：未找到应用图标 assets/app_icon.ico。"
+            return
+        try:
+            self.iconbitmap(str(icon_path))
+        except Exception as exc:  # noqa: BLE001 - missing/invalid icons should not block GUI startup.
+            self.icon_status_message = f"提示：应用图标加载失败：{exc}"
+        else:
+            self.icon_status_message = None
+
+    def _build_status_bar(self) -> None:
         status_bar = ctk.CTkFrame(self, corner_radius=0)
-        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 12))
+        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
         status_bar.grid_columnconfigure(2, weight=1)
-        status_bar.configure(fg_color=COLORS["surface"], border_width=1, border_color=COLORS["border"])
+        status_bar.configure(fg_color=COLORS["surface"], border_width=1, border_color=COLORS["border_soft"])
         ctk.CTkLabel(status_bar, text="状态：", text_color=COLORS["text_muted"], font=FONTS["body"]).grid(
-            row=0, column=0, padx=(16, 4), pady=8, sticky="w"
+            row=0, column=0, padx=(12, 4), pady=6, sticky="w"
         )
         ctk.CTkLabel(status_bar, textvariable=self.status_var, text_color=COLORS["text"], font=FONTS["body"]).grid(
-            row=0, column=1, padx=(0, 10), pady=8, sticky="w"
+            row=0, column=1, padx=(0, 10), pady=6, sticky="w"
         )
-        self.status_dot = ctk.CTkLabel(status_bar, text="●", text_color=COLORS["success"], font=(FONTS["body"][0], 14))
-        self.status_dot.grid(row=0, column=2, padx=(0, 12), pady=8, sticky="w")
-        self.toggle_log_button = self._button(status_bar, "隐藏日志", self.toggle_log_panel, kind="ghost", width=112)
-        self.toggle_log_button.grid(row=0, column=3, padx=12, pady=6, sticky="e")
+        self.status_dot = ctk.CTkLabel(status_bar, text="●", text_color=COLORS["success"], font=(FONTS["body"][0], 12))
+        self.status_dot.grid(row=0, column=2, padx=(0, 12), pady=6, sticky="w")
+        self.toggle_log_button = self._button(status_bar, "隐藏日志", self.toggle_log_panel, kind="ghost", width=96, height=26)
+        self.toggle_log_button.grid(row=0, column=3, padx=10, pady=4, sticky="e")
 
     def _build_header(self) -> None:
-        header = ctk.CTkFrame(self, fg_color=COLORS["surface"], corner_radius=0, height=64)
+        header = ctk.CTkFrame(
+            self,
+            fg_color=COLORS["window"],
+            corner_radius=0,
+            height=52,
+            border_width=1,
+            border_color=COLORS["border_soft"],
+        )
         header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
         header.grid_columnconfigure(0, weight=1)
         header.grid_columnconfigure(1, weight=0)
         header.grid_columnconfigure(2, weight=1)
 
-        brand = ctk.CTkFrame(header, fg_color="transparent")
-        brand.grid(row=0, column=0, sticky="w", padx=20, pady=12)
-        ctk.CTkLabel(
-            brand,
-            text="✓",
-            width=24,
-            height=24,
-            fg_color=COLORS["primary"],
-            corner_radius=12,
-            text_color=COLORS["text"],
-            font=(FONTS["button"][0], 13, "bold"),
-        ).grid(row=0, column=0, padx=(0, 10))
-        ctk.CTkLabel(brand, text=APP_TITLE, text_color=COLORS["text"], font=(FONTS["title"][0], 17, "bold")).grid(
-            row=0, column=1
-        )
-
         self.nav_tabs = ctk.CTkSegmentedButton(
             header,
             values=[SYNC_TAB_NAME, SETTINGS_TAB_NAME],
             command=self._show_main_tab,
-            height=38,
+            width=280,
+            height=36,
             corner_radius=RADIUS["pill"],
-            fg_color=COLORS["surface_2"],
-            selected_color=COLORS["primary"],
-            selected_hover_color=COLORS["primary_hover"],
-            unselected_color=COLORS["surface_2"],
-            unselected_hover_color=COLORS["surface_3"],
-            text_color=COLORS["text"],
-            font=FONTS["button"],
+            **{**SEGMENTED_STYLE, "font": (FONTS["button"][0], 14, "bold")},
         )
-        self.nav_tabs.grid(row=0, column=1, pady=12)
+        self.nav_tabs.grid(row=0, column=1, pady=10)
         self.nav_tabs.set(SYNC_TAB_NAME)
 
     def _bind_scrollable_frame_mousewheel(self, frame: Any) -> None:
@@ -251,6 +355,8 @@ class InsEagleSyncApp(_BaseWindow):
             delta = getattr(event, "delta", 0)
             if delta:
                 canvas.yview_scroll(int(-1 * (delta / 120)) * MAIN_SCROLL_UNITS_PER_WHEEL, "units")
+                if frame is self.__dict__.get("settings_content_scroll") or frame is self.__dict__.get("settings_tab"):
+                    self._schedule_settings_nav_update()
             return "break"
 
         self._bind_mousewheel_to_widget(frame, scroll)
@@ -276,9 +382,28 @@ class InsEagleSyncApp(_BaseWindow):
         if value == SETTINGS_TAB_NAME:
             self.sync_tab.grid_remove()
             self.settings_tab.grid()
+            self._schedule_settings_nav_update()
         else:
             self.settings_tab.grid_remove()
             self.sync_tab.grid()
+
+    def _on_root_configure(self, event: object) -> None:
+        if getattr(event, "widget", None) is not self:
+            return
+        if self._resize_debug_enabled:
+            self.resize_debug_stats["root_configure_events"] += 1
+        self._is_resizing = True
+        if self._resize_after_id is not None:
+            try:
+                self.after_cancel(self._resize_after_id)
+            except Exception:  # noqa: BLE001 - resize debounce is best effort.
+                pass
+        self._resize_after_id = self.after(RESIZE_IDLE_DEBOUNCE_MS, self._finish_resize)
+
+    def _finish_resize(self) -> None:
+        self._resize_after_id = None
+        self._is_resizing = False
+        self._schedule_settings_nav_update()
 
     def _button(
         self,
@@ -288,33 +413,18 @@ class InsEagleSyncApp(_BaseWindow):
         *,
         kind: str = "secondary",
         width: int = 120,
+        height: int = BUTTON_HEIGHT,
     ) -> Any:
-        if kind == "primary":
-            return ctk.CTkButton(
-                parent,
-                text=text,
-                command=command,
-                width=width,
-                height=BUTTON_HEIGHT,
-                fg_color=COLORS["primary"],
-                hover_color=COLORS["primary_hover"],
-                text_color=COLORS["text"],
-                font=FONTS["button"],
-                corner_radius=RADIUS["control"],
-            )
+        style = BUTTON_STYLES.get(kind, BUTTON_STYLES["secondary"])
         return ctk.CTkButton(
             parent,
             text=text,
             command=command,
             width=width,
-            height=BUTTON_HEIGHT,
-            fg_color="transparent",
-            hover_color=COLORS["surface_3"],
-            border_width=1,
-            border_color=COLORS["border"],
-            text_color=COLORS["text"],
+            height=height,
             font=FONTS["button"],
             corner_radius=RADIUS["control"],
+            **style,
         )
 
     def _card(self, parent: Any, row: int, title: str, icon: str, *, columns: int = 1) -> Any:
@@ -329,10 +439,10 @@ class InsEagleSyncApp(_BaseWindow):
         for column in range(columns):
             card.grid_columnconfigure(column, weight=1)
         ctk.CTkLabel(card, text=icon, text_color=COLORS["text"], font=FONTS["section"]).grid(
-            row=0, column=0, padx=(SPACE["lg"], 6), pady=(SPACE["lg"], SPACE["sm"]), sticky="w"
+            row=0, column=0, padx=(SPACE["md"], 6), pady=(SPACE["md"], SPACE["sm"]), sticky="w"
         )
         ctk.CTkLabel(card, text=title, text_color=COLORS["text"], font=FONTS["section"]).grid(
-            row=0, column=0, padx=(44, SPACE["lg"]), pady=(SPACE["lg"], SPACE["sm"]), sticky="w"
+            row=0, column=0, padx=(36, SPACE["md"]), pady=(SPACE["md"], SPACE["sm"]), sticky="w"
         )
         return card
 
@@ -342,13 +452,11 @@ class InsEagleSyncApp(_BaseWindow):
             placeholder_text=placeholder,
             height=INPUT_HEIGHT,
             width=width or 120,
-            fg_color=COLORS["input"],
-            border_color=COLORS["border"],
-            text_color=COLORS["text"],
-            placeholder_text_color=COLORS["text_dim"],
-            corner_radius=RADIUS["control"],
-            font=FONTS["body"],
+            **ENTRY_STYLE,
         )
+
+    def _checkbox(self, parent: Any, text: str, variable: Any) -> Any:
+        return ctk.CTkCheckBox(parent, text=text, variable=variable, **CHECKBOX_STYLE)
 
     def _configure_log_tags(self) -> None:
         try:
@@ -362,43 +470,40 @@ class InsEagleSyncApp(_BaseWindow):
     def _build_log_panel(self) -> None:
         self.log_panel = ctk.CTkFrame(
             self,
+            width=LOG_PANEL_WIDTH,
             corner_radius=RADIUS["card"],
-            fg_color=COLORS["surface"],
+            fg_color=COLORS["card"],
             border_width=1,
             border_color=COLORS["border"],
         )
-        self.log_panel.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 12))
+        self.log_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(0, 10))
         self.log_panel.grid_columnconfigure(0, weight=1)
         self.log_panel.grid_rowconfigure(1, weight=1)
 
         log_tools = ctk.CTkFrame(self.log_panel, corner_radius=0, fg_color="transparent")
-        log_tools.grid(row=0, column=0, sticky="ew", padx=14, pady=(14, 8))
+        log_tools.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 6))
         log_tools.grid_columnconfigure(5, weight=1)
-        ctk.CTkLabel(log_tools, text="▤", text_color=COLORS["text"], font=FONTS["section"]).grid(
-            row=0, column=0, padx=(0, 8), pady=6, sticky="w"
+        ctk.CTkLabel(log_tools, text="▤", text_color=COLORS["text_muted"], font=FONTS["section"]).grid(
+            row=0, column=0, padx=(0, 8), pady=4, sticky="w"
         )
         ctk.CTkLabel(log_tools, text=LOG_PANEL_TITLE, text_color=COLORS["text"], font=FONTS["section"]).grid(
-            row=0, column=1, padx=(0, 12), pady=6, sticky="w"
+            row=0, column=1, padx=(0, 12), pady=4, sticky="w"
         )
-        self.clear_log_button = self._button(log_tools, "清空", self.clear_log, kind="ghost", width=68)
-        self.clear_log_button.grid(row=0, column=2, padx=4, pady=6)
-        self.copy_log_button = self._button(log_tools, "复制", self.copy_log, kind="ghost", width=68)
-        self.copy_log_button.grid(row=0, column=3, padx=4, pady=6)
-        self.close_log_button = self._button(log_tools, "关闭", self.toggle_log_panel, kind="ghost", width=68)
-        self.close_log_button.grid(row=0, column=4, padx=4, pady=6)
+        self.clear_log_button = self._button(log_tools, "清空", self.clear_log, kind="ghost", width=58, height=26)
+        self.clear_log_button.grid(row=0, column=2, padx=3, pady=4)
+        self.copy_log_button = self._button(log_tools, "复制", self.copy_log, kind="ghost", width=58, height=26)
+        self.copy_log_button.grid(row=0, column=3, padx=3, pady=4)
+        self.close_log_button = self._button(log_tools, "关闭", self.toggle_log_panel, kind="ghost", width=58, height=26)
+        self.close_log_button.grid(row=0, column=4, padx=3, pady=4)
 
         self.log_text = ctk.CTkTextbox(
             self.log_panel,
             wrap="word",
-            width=420,
-            fg_color="#07111d",
+            width=LOG_PANEL_WIDTH - 26,
             border_width=1,
-            border_color=COLORS["border"],
-            corner_radius=RADIUS["control"],
-            text_color=COLORS["text"],
-            font=FONTS["mono"],
+            **TEXTBOX_STYLE,
         )
-        self.log_text.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 14))
+        self.log_text.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self._configure_log_tags()
         self._bind_local_mousewheel(self.log_text)
 
@@ -415,6 +520,9 @@ class InsEagleSyncApp(_BaseWindow):
             return
 
     def _build_sync_tab(self, parent: Any) -> None:
+        if getattr(self, "_sync_tab_built", False):
+            return
+        self._sync_tab_built = True
         parent.grid_columnconfigure(0, weight=1)
 
         source = self._card(parent, 1, "1. 来源", "⌁", columns=4)
@@ -432,14 +540,8 @@ class InsEagleSyncApp(_BaseWindow):
             source,
             values=[MODE_POST, MODE_AUTHOR],
             command=self._sync_mode_changed,
-            height=38,
-            fg_color=COLORS["surface_2"],
-            selected_color=COLORS["primary"],
-            selected_hover_color=COLORS["primary_hover"],
-            unselected_color=COLORS["surface_2"],
-            unselected_hover_color=COLORS["surface_3"],
-            text_color=COLORS["text"],
-            font=FONTS["button"],
+            height=30,
+            **SEGMENTED_STYLE,
         )
         self.mode.grid(row=3, column=1, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="ew")
 
@@ -453,8 +555,10 @@ class InsEagleSyncApp(_BaseWindow):
 
         self.author_options_panel = ctk.CTkFrame(
             self.author_options_slot,
-            fg_color=COLORS["surface_2"],
+            fg_color=COLORS["surface_3"],
             corner_radius=RADIUS["control"],
+            border_width=1,
+            border_color=COLORS["border_soft"],
         )
         self.author_options_panel.grid(row=0, column=0, sticky="ew")
         self.author_options_panel.grid_columnconfigure(1, weight=1)
@@ -469,14 +573,8 @@ class InsEagleSyncApp(_BaseWindow):
             values=list(AUTHOR_SYNC_RANGE_VALUES),
             variable=self.author_sync_range_var,
             command=self._author_range_changed,
-            height=34,
-            fg_color=COLORS["surface_3"],
-            selected_color=COLORS["primary"],
-            selected_hover_color=COLORS["primary_hover"],
-            unselected_color=COLORS["surface_3"],
-            unselected_hover_color=COLORS["card_hover"],
-            text_color=COLORS["text"],
-            font=FONTS["button"],
+            height=30,
+            **SEGMENTED_STYLE,
         )
         self.author_range_choice.grid(row=0, column=1, padx=SPACE["md"], pady=(SPACE["md"], SPACE["sm"]), sticky="ew")
         self.author_range_choice.set(AUTHOR_SYNC_UNLIMITED)
@@ -524,14 +622,8 @@ class InsEagleSyncApp(_BaseWindow):
             self.date_range_frame,
             values=list(DATE_RANGE_VALUES),
             variable=self.date_range_var,
-            height=32,
-            fg_color=COLORS["surface_2"],
-            selected_color=COLORS["primary"],
-            selected_hover_color=COLORS["primary_hover"],
-            unselected_color=COLORS["surface_2"],
-            unselected_hover_color=COLORS["surface_3"],
-            text_color=COLORS["text"],
-            font=FONTS["button"],
+            height=28,
+            **SEGMENTED_STYLE,
         )
         self.date_range_choice.grid(row=0, column=1, sticky="e")
         self._set_entry(self.date_range_amount_entry, "1")
@@ -563,13 +655,13 @@ class InsEagleSyncApp(_BaseWindow):
         common = self._card(parent, 3, "3. 常用选项", "⚙", columns=2)
         common.grid_columnconfigure(0, weight=1)
         common.grid_columnconfigure(1, weight=1)
-        ctk.CTkCheckBox(common, text="同步前检查 Eagle 中是否已存在", variable=self.verify_var).grid(
+        self._checkbox(common, "同步前检查 Eagle 中是否已存在", self.verify_var).grid(
             row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
         )
         ctk.CTkLabel(common, text="避免重复导入，删除后可重新补导入。", text_color="gray").grid(
             row=2, column=0, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
         )
-        ctk.CTkCheckBox(common, text="仅预览，不实际导入", variable=self.dry_run_var).grid(
+        self._checkbox(common, "仅预览，不实际导入", self.dry_run_var).grid(
             row=1, column=1, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
         )
         ctk.CTkLabel(common, text="只显示将要执行的内容。", text_color="gray").grid(
@@ -579,26 +671,32 @@ class InsEagleSyncApp(_BaseWindow):
         advanced = self._card(parent, 4, "4. 高级选项", "☷", columns=3)
         for column in range(3):
             advanced.grid_columnconfigure(column, weight=1)
-        ctk.CTkCheckBox(advanced, text="忽略下载记录，重新下载", variable=self.ignore_archive_var).grid(
+        self._checkbox(advanced, "忽略下载记录，重新下载", self.ignore_archive_var).grid(
             row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
         )
         ctk.CTkLabel(advanced, text="即使以前下载过，也重新下载。", text_color="gray").grid(
             row=2, column=0, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
         )
-        ctk.CTkCheckBox(advanced, text="强制重新导入", variable=self.force_var).grid(
+        self._checkbox(advanced, "强制重新导入", self.force_var).grid(
             row=1, column=1, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
         )
         ctk.CTkLabel(advanced, text="忽略已导入记录，可能产生重复素材。", text_color="gray").grid(
             row=2, column=1, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
         )
-        ctk.CTkCheckBox(advanced, text="显示详细注释", variable=self.show_annotation_var).grid(
+        self._checkbox(advanced, "显示详细注释", self.show_annotation_var).grid(
             row=1, column=2, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
         )
-        ctk.CTkLabel(advanced, text="在日志中显示将写入 Eagle 的完整注释。", text_color="gray").grid(
+        ctk.CTkLabel(advanced, text="在日志中显示将写入 Eagle 的完整注释。", text_color=COLORS["text_muted"], font=FONTS["small"]).grid(
             row=2, column=2, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
         )
 
-        actions = ctk.CTkFrame(parent, fg_color=COLORS["surface"], corner_radius=RADIUS["card"])
+        actions = ctk.CTkFrame(
+            parent,
+            fg_color=COLORS["card"],
+            corner_radius=RADIUS["card"],
+            border_width=1,
+            border_color=COLORS["border"],
+        )
         actions.grid(row=5, column=0, sticky="ew", padx=SPACE["md"], pady=(0, SPACE["lg"]))
         for column in range(6):
             actions.grid_columnconfigure(column, weight=1)
@@ -617,19 +715,41 @@ class InsEagleSyncApp(_BaseWindow):
         self.open_readme_button.grid(row=0, column=5, padx=(SPACE["sm"], SPACE["md"]), pady=SPACE["md"], sticky="ew")
 
     def _build_settings_tab(self, parent: Any) -> None:
+        if getattr(self, "_settings_tab_built", False):
+            return
+        self._settings_tab_built = True
         parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+        self.settings_nav_buttons: dict[str, Any] = {}
+        self.settings_nav_after_id: str | None = None
+        self.settings_section_widgets: dict[str, Any] = {}
+        self.settings_nav_order: tuple[tuple[str, str], ...] = ()
+
+        content = ctk.CTkScrollableFrame(
+            parent,
+            fg_color=COLORS["surface"],
+            corner_radius=RADIUS["card"],
+            **SCROLLBAR_STYLE,
+        )
+        content.grid(row=0, column=0, sticky="nsew", padx=SPACE["md"], pady=0)
+        content.grid_columnconfigure(0, weight=1)
+        self.settings_content_scroll = content
+        self.settings_content_frame = content
+        self._bind_scrollable_frame_mousewheel(content)
+        parent = content
 
         ctk.CTkLabel(parent, text="设置中心", text_color=COLORS["text"], font=FONTS["page_title"]).grid(
-            row=0, column=0, padx=SPACE["lg"], pady=(SPACE["xl"], 4), sticky="w"
+            row=0, column=0, padx=SPACE["md"], pady=(SPACE["lg"], 4), sticky="w"
         )
         ctk.CTkLabel(
             parent,
             text="管理登录方式、存储路径、网络连接及应用行为设置。",
             text_color=COLORS["text_muted"],
             font=FONTS["body"],
-        ).grid(row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w")
+        ).grid(row=1, column=0, padx=SPACE["md"], pady=(0, SPACE["md"]), sticky="w")
 
         login_card = self._card(parent, 2, "1. Instagram 登录方式", "♙", columns=3)
+        self.settings_section_widgets["instagram"] = login_card
         login_card.grid_columnconfigure(0, weight=1)
         login_card.grid_columnconfigure(1, weight=1)
         login_card.grid_columnconfigure(2, weight=1)
@@ -637,14 +757,8 @@ class InsEagleSyncApp(_BaseWindow):
             login_card,
             values=[LOGIN_COOKIE_FILE, LOGIN_BROWSER, LOGIN_NONE],
             command=self._login_method_changed,
-            height=42,
-            fg_color=COLORS["surface_2"],
-            selected_color=COLORS["primary"],
-            selected_hover_color=COLORS["primary_hover"],
-            unselected_color=COLORS["surface_2"],
-            unselected_hover_color=COLORS["surface_3"],
-            text_color=COLORS["text"],
-            font=FONTS["button"],
+            height=30,
+            **SEGMENTED_STYLE,
         )
         self.login_method.grid(row=1, column=0, columnspan=3, padx=SPACE["lg"], pady=(0, SPACE["sm"]), sticky="ew")
         ctk.CTkLabel(
@@ -657,7 +771,13 @@ class InsEagleSyncApp(_BaseWindow):
             font=FONTS["small"],
         ).grid(row=2, column=0, columnspan=3, padx=SPACE["lg"], pady=(0, SPACE["md"]), sticky="w")
 
-        self.browser_login_frame = ctk.CTkFrame(login_card, corner_radius=RADIUS["control"], fg_color=COLORS["surface_2"])
+        self.browser_login_frame = ctk.CTkFrame(
+            login_card,
+            corner_radius=RADIUS["control"],
+            fg_color=COLORS["surface_3"],
+            border_width=1,
+            border_color=COLORS["border_soft"],
+        )
         self.browser_login_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(0, SPACE["md"]))
         self.browser_login_frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(self.browser_login_frame, text="浏览器选择", text_color=COLORS["text"], font=FONTS["label"]).grid(
@@ -667,6 +787,8 @@ class InsEagleSyncApp(_BaseWindow):
             self.browser_login_frame,
             values=list(BROWSER_LABELS),
             command=self._browser_changed,
+            height=28,
+            **SEGMENTED_STYLE,
         )
         self.browser_choice.grid(row=0, column=1, padx=(0, SPACE["md"]), pady=SPACE["md"], sticky="w")
         ctk.CTkLabel(self.browser_login_frame, text="Profile", text_color=COLORS["text"], font=FONTS["label"]).grid(
@@ -676,13 +798,7 @@ class InsEagleSyncApp(_BaseWindow):
             self.browser_login_frame,
             values=["Default"],
             height=INPUT_HEIGHT,
-            fg_color=COLORS["input"],
-            button_color=COLORS["surface_3"],
-            button_hover_color=COLORS["primary"],
-            border_color=COLORS["border"],
-            text_color=COLORS["text"],
-            corner_radius=RADIUS["control"],
-            font=FONTS["body"],
+            **COMBOBOX_STYLE,
         )
         self.browser_profile_entry.grid(row=1, column=1, padx=(0, SPACE["sm"]), pady=(0, SPACE["md"]), sticky="ew")
         self.scan_profiles_button = self._button(self.browser_login_frame, "扫描 Profile", self.scan_browser_profiles, width=124)
@@ -694,7 +810,13 @@ class InsEagleSyncApp(_BaseWindow):
             font=FONTS["small"],
         ).grid(row=2, column=0, columnspan=3, padx=SPACE["md"], pady=(0, SPACE["md"]), sticky="w")
 
-        self.cookie_file_frame = ctk.CTkFrame(login_card, corner_radius=RADIUS["control"], fg_color=COLORS["surface_2"])
+        self.cookie_file_frame = ctk.CTkFrame(
+            login_card,
+            corner_radius=RADIUS["control"],
+            fg_color=COLORS["surface_3"],
+            border_width=1,
+            border_color=COLORS["border_soft"],
+        )
         self.cookie_file_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(0, SPACE["md"]))
         self.cookie_file_frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(
@@ -722,6 +844,7 @@ class InsEagleSyncApp(_BaseWindow):
         self.test_login_button.grid(row=5, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w")
 
         storage_card = self._card(parent, 3, "2. 下载与缓存路径", "▱", columns=3)
+        self.settings_section_widgets["storage"] = storage_card
         storage_card.grid_columnconfigure(1, weight=1)
         self._add_setting_row(
             storage_card,
@@ -734,6 +857,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._add_storage_preview(storage_card, 2)
 
         connect_card = self._card(parent, 4, "3. 连接与默认值", "◎", columns=4)
+        self.settings_section_widgets["eagle"] = connect_card
         for column in range(4):
             connect_card.grid_columnconfigure(column, weight=1)
         self._add_compact_field(connect_card, 1, 0, "Eagle 本地 API 地址", "eagle_api_base")
@@ -748,14 +872,250 @@ class InsEagleSyncApp(_BaseWindow):
             button_command=self.choose_default_eagle_folder,
         )
         self._add_compact_field(connect_card, 2, 2, "作者主页默认最多同步帖子数", "max_posts")
-        self._add_proxy_settings(connect_card, 3)
+        proxy_frame = self._add_proxy_settings(connect_card, 3)
+        self.settings_section_widgets["proxy"] = proxy_frame
 
         actions = ctk.CTkFrame(connect_card, corner_radius=0, fg_color="transparent")
         actions.grid(row=4, column=0, columnspan=4, sticky="ew", padx=SPACE["lg"], pady=(SPACE["md"], SPACE["lg"]))
-        self.save_settings_button = self._button(actions, "保存设置", self.save_settings, kind="primary", width=180)
-        self.save_settings_button.grid(row=0, column=0, padx=(0, SPACE["sm"]), pady=0, sticky="w")
-        self.reload_settings_button = self._button(actions, "重新加载", self.reload_settings, width=140)
-        self.reload_settings_button.grid(row=0, column=1, padx=SPACE["sm"], pady=0, sticky="w")
+        actions.grid_columnconfigure(0, weight=1)
+        self.reload_settings_button = self._button(actions, "重新加载", self.reload_settings, width=116)
+        self.reload_settings_button.grid(row=0, column=1, padx=SPACE["sm"], pady=0, sticky="e")
+        self.save_settings_button = self._button(actions, "保存设置", self.save_settings, kind="primary", width=132)
+        self.save_settings_button.grid(row=0, column=2, padx=(SPACE["sm"], 0), pady=0, sticky="e")
+        self._bind_scrollable_frame_mousewheel(content)
+
+    def _scroll_settings_to_section(self, section_key: str) -> None:
+        widget = getattr(self, "settings_section_widgets", {}).get(section_key)
+        canvas = self._settings_scroll_canvas()
+        if widget is None or canvas is None:
+            self._highlight_settings_nav(section_key)
+            return
+        try:
+            self.update_idletasks()
+            y = self._settings_widget_y(widget)
+            section_height = self._settings_widget_height(widget)
+            scroll_height = self._settings_scroll_height(canvas)
+            viewport_height = max(int(canvas.winfo_height()), 1)
+            canvas.yview_moveto(
+                self._settings_scroll_fraction(
+                    section_y=y,
+                    section_height=section_height,
+                    viewport_height=viewport_height,
+                    scroll_height=scroll_height,
+                )
+            )
+        except Exception:  # noqa: BLE001 - navigation should stay best-effort.
+            pass
+        self._highlight_settings_nav(section_key)
+        self._flash_settings_section(section_key)
+        self._schedule_settings_nav_update()
+
+    def _schedule_settings_nav_update(self) -> None:
+        if not getattr(self, "settings_nav_buttons", None):
+            return
+        try:
+            if self.settings_nav_after_id is not None:
+                self.after_cancel(self.settings_nav_after_id)
+            self.settings_nav_after_id = self.after(60, self._update_settings_nav_from_scroll)
+        except Exception:  # noqa: BLE001 - test doubles may not expose after scheduling.
+            self._update_settings_nav_from_scroll()
+
+    def _update_settings_nav_from_scroll(self) -> None:
+        self.settings_nav_after_id = None
+        active = self._settings_active_section_key()
+        if active:
+            self._highlight_settings_nav(active)
+
+    def _settings_active_section_key(self) -> str | None:
+        canvas = self._settings_scroll_canvas()
+        if canvas is None:
+            return None
+        try:
+            visible_top = float(canvas.canvasy(0))
+            viewport_height = max(int(canvas.winfo_height()), 1)
+            scroll_height = self._settings_scroll_height(canvas)
+        except Exception:  # noqa: BLE001 - alternate canvas implementations can differ.
+            return None
+
+        ranges = self._settings_section_ranges(scroll_height=scroll_height)
+        if not ranges:
+            return None
+
+        max_top = max(float(scroll_height - viewport_height), 0.0)
+        if max_top > 0 and visible_top >= max_top - 2:
+            return ranges[-1][2]
+
+        visible_bottom = visible_top + viewport_height
+        anchor_y = visible_top + viewport_height * 0.55
+        for start, end, key in ranges:
+            if start <= anchor_y < end:
+                return key
+
+        best_key = ranges[0][2]
+        best_overlap = -1.0
+        for start, end, key in ranges:
+            overlap = max(0.0, min(end, visible_bottom) - max(start, visible_top))
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_key = key
+        return best_key
+
+    def _settings_section_ranges(self, *, scroll_height: int | None = None) -> list[tuple[float, float, str]]:
+        sections = getattr(self, "settings_section_widgets", {})
+        if not sections:
+            return []
+
+        starts: list[tuple[float, str]] = []
+        for key, _label in getattr(self, "settings_nav_order", ()):
+            widget = sections.get(key)
+            if widget is None:
+                continue
+            try:
+                starts.append((float(self._settings_widget_y(widget)), key))
+            except Exception:  # noqa: BLE001 - skip widgets that are not mapped yet.
+                continue
+        if not starts:
+            return []
+
+        starts.sort(key=lambda item: item[0])
+        if scroll_height is None:
+            canvas = self._settings_scroll_canvas()
+            if canvas is not None:
+                scroll_height = self._settings_scroll_height(canvas)
+            else:
+                last_widget = sections.get(starts[-1][1])
+                last_height = self._settings_widget_height(last_widget) if last_widget is not None else 1
+                scroll_height = int(starts[-1][0] + last_height)
+
+        ranges: list[tuple[float, float, str]] = []
+        for index, (start, key) in enumerate(starts):
+            if index + 1 < len(starts):
+                end = starts[index + 1][0]
+            else:
+                widget = sections.get(key)
+                widget_end = start + (self._settings_widget_height(widget) if widget is not None else 1)
+                end = max(float(scroll_height), widget_end)
+            ranges.append((start, max(end, start + 1), key))
+        return ranges
+
+    def _settings_scroll_canvas(self) -> Any | None:
+        scroll = self.__dict__.get("settings_content_scroll") or self.__dict__.get("settings_tab")
+        return getattr(scroll, "_parent_canvas", None)
+
+    def _highlight_settings_nav(self, active_key: str) -> None:
+        for key, button in getattr(self, "settings_nav_buttons", {}).items():
+            selected = key == active_key
+            try:
+                button.configure(
+                    fg_color=COLORS["selection"] if selected else "transparent",
+                    text_color=COLORS["text"] if selected else COLORS["text_muted"],
+                )
+            except Exception:  # noqa: BLE001 - tests may use lightweight doubles.
+                continue
+
+    def _flash_settings_section(self, section_key: str) -> None:
+        widget = getattr(self, "settings_section_widgets", {}).get(section_key)
+        if widget is None:
+            return
+        original = {
+            "border_color": self._safe_widget_cget(widget, "border_color", COLORS["border"]),
+            "border_width": self._safe_widget_cget(widget, "border_width", 1),
+        }
+        try:
+            widget.configure(border_color=COLORS["primary_soft"], border_width=2)
+        except Exception:  # noqa: BLE001 - not all anchors expose border options.
+            return
+
+        def restore() -> None:
+            try:
+                widget.configure(**original)
+            except Exception:  # noqa: BLE001 - best effort visual feedback.
+                pass
+
+        for delay, color_key in SETTINGS_SECTION_FLASH_STEPS[1:]:
+            def apply_step(key: str = color_key) -> None:
+                try:
+                    widget.configure(border_color=COLORS[key], border_width=2)
+                except Exception:  # noqa: BLE001 - best effort visual feedback.
+                    pass
+
+            try:
+                self.after(delay, apply_step)
+            except Exception:  # noqa: BLE001 - tests may not provide Tk scheduling.
+                apply_step()
+        try:
+            self.after(860, restore)
+        except Exception:  # noqa: BLE001 - tests may not provide Tk scheduling.
+            restore()
+
+    @staticmethod
+    def _safe_widget_cget(widget: Any, key: str, fallback: Any) -> Any:
+        try:
+            value = widget.cget(key)
+        except Exception:  # noqa: BLE001 - CustomTkinter/test doubles differ.
+            return fallback
+        return fallback if value is None else value
+
+    def _settings_widget_y(self, widget: Any) -> int:
+        content = getattr(self, "settings_content_frame", None)
+        y = 0
+        current = widget
+        while current is not None and current is not content:
+            y += int(current.winfo_y())
+            try:
+                current = current.master
+            except Exception:  # noqa: BLE001 - fallback for widgets without master.
+                break
+        if content is not None:
+            try:
+                y += int(content.winfo_y())
+            except Exception:  # noqa: BLE001 - content may be a test double.
+                pass
+        return max(y - SPACE["md"], 0)
+
+    @staticmethod
+    def _settings_widget_height(widget: Any) -> int:
+        for method_name in ("winfo_height", "winfo_reqheight"):
+            try:
+                height = int(getattr(widget, method_name)())
+            except Exception:  # noqa: BLE001 - try the next Tk geometry method.
+                continue
+            if height > 1:
+                return height
+        return 1
+
+    @staticmethod
+    def _settings_scroll_fraction(
+        *,
+        section_y: int,
+        section_height: int,
+        viewport_height: int,
+        scroll_height: int,
+    ) -> float:
+        if scroll_height <= 0:
+            return 0.0
+        viewport_height = max(viewport_height, 1)
+        section_height = max(section_height, 1)
+        if section_height <= viewport_height * 0.75:
+            offset = min(max(int((viewport_height - section_height) * 0.28), SETTINGS_SCROLL_TOP_PADDING), 96)
+        else:
+            offset = SETTINGS_SCROLL_TOP_PADDING
+        max_top = max(scroll_height - viewport_height, 0)
+        desired_top = min(max(section_y - offset, 0), max_top)
+        return min(max(desired_top / scroll_height, 0.0), 1.0)
+
+    @staticmethod
+    def _settings_scroll_height(canvas: Any) -> int:
+        try:
+            bbox = canvas.bbox("all")
+            if bbox:
+                return max(int(bbox[3] - bbox[1]), 1)
+        except Exception:  # noqa: BLE001 - fallback below.
+            pass
+        try:
+            return max(int(canvas.winfo_reqheight()), int(canvas.winfo_height()), 1)
+        except Exception:  # noqa: BLE001 - final fallback.
+            return 1
 
     def _add_setting_row(
         self,
@@ -804,8 +1164,14 @@ class InsEagleSyncApp(_BaseWindow):
         if key == "default_folder_path":
             entry.bind("<KeyRelease>", self._default_folder_path_changed)
 
-    def _add_proxy_settings(self, parent: Any, row: int) -> None:
-        frame = ctk.CTkFrame(parent, corner_radius=RADIUS["control"], fg_color=COLORS["surface_2"])
+    def _add_proxy_settings(self, parent: Any, row: int) -> Any:
+        frame = ctk.CTkFrame(
+            parent,
+            corner_radius=RADIUS["control"],
+            fg_color=COLORS["surface_3"],
+            border_width=1,
+            border_color=COLORS["border_soft"],
+        )
         frame.grid(row=row, column=0, columnspan=4, sticky="ew", padx=SPACE["lg"], pady=SPACE["sm"])
         frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(frame, text="代理设置", text_color=COLORS["text"], font=FONTS["section"]).grid(
@@ -815,14 +1181,8 @@ class InsEagleSyncApp(_BaseWindow):
             frame,
             values=list(PROXY_MODE_VALUES),
             command=self._proxy_mode_changed,
-            height=38,
-            fg_color=COLORS["surface_3"],
-            selected_color=COLORS["primary"],
-            selected_hover_color=COLORS["primary_hover"],
-            unselected_color=COLORS["surface_3"],
-            unselected_hover_color=COLORS["card_hover"],
-            text_color=COLORS["text"],
-            font=FONTS["button"],
+            height=30,
+            **SEGMENTED_STYLE,
         )
         self.proxy_mode.grid(row=1, column=0, columnspan=3, padx=SPACE["md"], pady=(0, SPACE["sm"]), sticky="ew")
 
@@ -876,9 +1236,16 @@ class InsEagleSyncApp(_BaseWindow):
             text_color=COLORS["text_muted"],
             font=FONTS["small"],
         ).grid(row=0, column=0, sticky="w")
+        return frame
 
     def _add_storage_preview(self, parent: Any, row: int) -> None:
-        frame = ctk.CTkFrame(parent, corner_radius=RADIUS["control"], fg_color=COLORS["surface_2"])
+        frame = ctk.CTkFrame(
+            parent,
+            corner_radius=RADIUS["control"],
+            fg_color=COLORS["surface_3"],
+            border_width=1,
+            border_color=COLORS["border_soft"],
+        )
         frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(SPACE["sm"], SPACE["lg"]))
         for column in range(3):
             frame.grid_columnconfigure(column, weight=1)
@@ -891,7 +1258,13 @@ class InsEagleSyncApp(_BaseWindow):
             ("Eagle 导入记录", "imported_state"),
         )
         for index, (label, key) in enumerate(rows):
-            tile = ctk.CTkFrame(frame, corner_radius=RADIUS["control"], fg_color=COLORS["input"])
+            tile = ctk.CTkFrame(
+                frame,
+                corner_radius=RADIUS["control"],
+                fg_color=COLORS["input"],
+                border_width=1,
+                border_color=COLORS["border_soft"],
+            )
             tile.grid(row=1, column=index, padx=SPACE["sm"], pady=(0, SPACE["md"]), sticky="nsew")
             ctk.CTkLabel(tile, text=label, text_color=COLORS["text"], font=FONTS["label"]).grid(
                 row=0, column=0, padx=SPACE["md"], pady=(SPACE["sm"], 2), sticky="w"
@@ -983,8 +1356,8 @@ class InsEagleSyncApp(_BaseWindow):
             data = self._collect_settings_data(require_storage_parent=True)
             if data is None:
                 return
-            write_config_data(data, DEFAULT_CONFIG_PATH)
-            self.config_path = Path(DEFAULT_CONFIG_PATH)
+            write_config_data(data, get_runtime_config_path())
+            self.config_path = get_runtime_config_path()
             self.config_data = load_config_data(self.config_path)
             self.config = self._load_config()
             self._populate_settings_form()
@@ -1000,7 +1373,7 @@ class InsEagleSyncApp(_BaseWindow):
 
     def reload_settings(self) -> None:
         try:
-            self.config_path = ensure_config_file(DEFAULT_CONFIG_PATH, EXAMPLE_CONFIG_PATH)
+            self.config_path = ensure_config_file(get_runtime_config_path(), get_runtime_example_config_path())
             self.config_data = load_config_data(self.config_path)
             self.config = self._load_config()
             self._populate_settings_form()
@@ -1095,7 +1468,8 @@ class InsEagleSyncApp(_BaseWindow):
                 self.storage_preview_vars[key].set(str(value))
 
     def _prompt_for_storage_parent(self) -> str | None:
-        messagebox.showinfo(
+        show_centered_info(
+            self,
             "选择存储目录",
             "请先选择“存储下载文件的父级文件夹”。本工具会在其中自动创建 _staging 和 _cache。",
         )
@@ -1114,8 +1488,8 @@ class InsEagleSyncApp(_BaseWindow):
             return False
         try:
             data = apply_storage_parent(self.config_data, parent)
-            write_config_data(data, DEFAULT_CONFIG_PATH)
-            self.config_path = Path(DEFAULT_CONFIG_PATH)
+            write_config_data(data, get_runtime_config_path())
+            self.config_path = get_runtime_config_path()
             self.config_data = load_config_data(self.config_path)
             self.config = self._load_config()
             self._populate_settings_form()
@@ -1195,19 +1569,42 @@ class InsEagleSyncApp(_BaseWindow):
             return
         window = ctk.CTkToplevel(self)
         window.title("如何获取 cookies.txt？")
-        window.geometry("680x420")
+        window.configure(fg_color=COLORS["window"])
+        center_window(window, 680, 420)
+        window.transient(self)
         window.grid_columnconfigure(0, weight=1)
         window.grid_rowconfigure(0, weight=1)
-        text = ctk.CTkTextbox(window, wrap="word")
-        text.grid(row=0, column=0, sticky="nsew", padx=16, pady=(16, 8))
+        text = ctk.CTkTextbox(window, wrap="word", border_width=1, **TEXTBOX_STYLE)
+        text.grid(row=0, column=0, sticky="nsew", padx=SPACE["md"], pady=(SPACE["md"], SPACE["sm"]))
         text.insert("end", cookie_help_text())
         text.configure(state="disabled")
-        actions = ctk.CTkFrame(window, corner_radius=0)
-        actions.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 16))
-        ctk.CTkButton(actions, text="打开插件下载页", command=open_cookie_help_url).grid(
-            row=0, column=0, padx=(0, 8), pady=8
+        actions = ctk.CTkFrame(window, corner_radius=0, fg_color="transparent")
+        actions.grid(row=1, column=0, sticky="ew", padx=SPACE["md"], pady=(0, SPACE["md"]))
+        ctk.CTkButton(
+            actions,
+            text="打开插件下载页",
+            command=open_cookie_help_url,
+            height=BUTTON_HEIGHT,
+            corner_radius=RADIUS["control"],
+            font=FONTS["button"],
+            **BUTTON_STYLES["primary"],
+        ).grid(
+            row=0, column=0, padx=(0, SPACE["sm"]), pady=SPACE["sm"]
         )
-        ctk.CTkButton(actions, text="关闭", command=window.destroy).grid(row=0, column=1, padx=8, pady=8)
+        ctk.CTkButton(
+            actions,
+            text="关闭",
+            command=window.destroy,
+            height=BUTTON_HEIGHT,
+            corner_radius=RADIUS["control"],
+            font=FONTS["button"],
+            **BUTTON_STYLES["secondary"],
+        ).grid(row=0, column=1, padx=SPACE["sm"], pady=SPACE["sm"])
+        try:
+            window.lift()
+            window.focus_force()
+        except Exception:  # noqa: BLE001 - focus behavior varies by platform/window manager.
+            pass
 
     def test_instagram_login(self) -> None:
         data = self._collect_settings_data(require_storage_parent=False)
@@ -1220,8 +1617,12 @@ class InsEagleSyncApp(_BaseWindow):
             messages = run_instagram_login_check(config, url)
             for message in messages:
                 self._queue_log(message)
+            failed = any(message.startswith("警告：") or message.startswith("错误：") for message in messages)
+            if failed and config.cookies.from_browser and not self.browser_cookie_help_prompted:
+                self.browser_cookie_help_prompted = True
+                self.log_queue.put(SHOW_BROWSER_COOKIE_HELP)
             return {
-                "ok": not any(message.startswith("警告：") or message.startswith("错误：") for message in messages),
+                "ok": not failed,
                 "messages": messages,
             }
 
@@ -1229,6 +1630,8 @@ class InsEagleSyncApp(_BaseWindow):
 
     def startup_checks(self) -> None:
         def run() -> None:
+            if self.icon_status_message:
+                self._queue_log(self.icon_status_message)
             for message in run_startup_checks(self.config):
                 self._queue_log(message)
 
@@ -1318,8 +1721,8 @@ class InsEagleSyncApp(_BaseWindow):
     def _remember_last_eagle_folder(self, selection: dict[str, str]) -> None:
         try:
             data = apply_last_eagle_folder(self.config_data, selection)
-            write_config_data(data, DEFAULT_CONFIG_PATH)
-            self.config_path = Path(DEFAULT_CONFIG_PATH)
+            write_config_data(data, get_runtime_config_path())
+            self.config_path = get_runtime_config_path()
             self.config_data = load_config_data(self.config_path)
             self.config = self._load_config()
         except Exception as exc:  # noqa: BLE001 - remembering should not block selection.
@@ -1362,7 +1765,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._open_path(Path(self.config_path).resolve().parent, "配置目录")
 
     def open_readme(self) -> None:
-        readme_path = Path("README.md").resolve()
+        readme_path = get_runtime_readme_path().resolve()
         if not readme_path.exists():
             self._append_log(f"提示：README.md 不存在：{readme_path}")
             return
@@ -1523,6 +1926,7 @@ class InsEagleSyncApp(_BaseWindow):
             self._append_log("提示：当前已有任务正在运行。")
             return
 
+        self.browser_cookie_help_prompted = False
         self._set_controls_enabled(False)
         self._set_status(STATUS_RUNNING)
         self._append_log("")
@@ -1568,8 +1972,17 @@ class InsEagleSyncApp(_BaseWindow):
         self.log_queue.put(sanitized)
         if should_show_login_failure_hint(sanitized):
             self.log_queue.put(FRIENDLY_LOGIN_FAILURE_HINT)
+            if self.config.cookies.from_browser and not self.browser_cookie_help_prompted:
+                self.browser_cookie_help_prompted = True
+                self.log_queue.put(SHOW_BROWSER_COOKIE_HELP)
 
     def _drain_log_queue(self) -> None:
+        if self.__dict__.get("_is_resizing", False):
+            if self.__dict__.get("_resize_debug_enabled", False):
+                self.resize_debug_stats["log_flush_deferred"] += 1
+            self.after(LOG_FLUSH_RESIZE_DELAY_MS, self._drain_log_queue)
+            return
+
         log_messages: list[str] = []
         while True:
             try:
@@ -1583,6 +1996,8 @@ class InsEagleSyncApp(_BaseWindow):
             elif message == "__TASK_DONE_FAILED__":
                 self._set_controls_enabled(True)
                 self._set_status(STATUS_FAILED)
+            elif message == SHOW_BROWSER_COOKIE_HELP:
+                self._show_browser_cookie_help_prompt()
             else:
                 log_messages.append(message)
                 if len(log_messages) >= LOG_BATCH_LIMIT:
@@ -1593,10 +2008,29 @@ class InsEagleSyncApp(_BaseWindow):
 
         self.after(LOG_FLUSH_INTERVAL_MS, self._drain_log_queue)
 
+    def _show_browser_cookie_help_prompt(self) -> None:
+        show_centered_warning(
+            self,
+            "浏览器读取失败",
+            "自动从浏览器读取登录状态失败。建议改用 cookies.txt 文件方式。\n\n"
+            "程序将切换到 cookies.txt 模式，并打开获取 cookies.txt 的说明。",
+        )
+        try:
+            self.login_method.set(LOGIN_COOKIE_FILE)
+            self._login_method_changed(LOGIN_COOKIE_FILE)
+        except Exception:  # noqa: BLE001 - keep the help dialog available even if widgets are unavailable.
+            pass
+        self.show_cookie_help()
+
     def _append_log(self, message: object) -> None:
         self._append_log_batch([self._sanitize_log_message(message)])
 
     def _append_log_batch(self, messages: list[object]) -> None:
+        if self.__dict__.get("_is_resizing", False):
+            for message in messages:
+                self.log_queue.put(self._sanitize_log_message(message))
+            return
+
         inserted = 0
         should_scroll = self._log_is_at_bottom()
         for message in messages:
@@ -1709,7 +2143,8 @@ class EagleFolderPickerDialog:
 
         self.window = ctk.CTkToplevel(parent)
         self.window.title("选择 Eagle 导入位置")
-        self.window.geometry("760x620")
+        self.window.configure(fg_color=COLORS["window"])
+        center_window(self.window, 760, 620)
         self.window.minsize(620, 460)
         self.window.transient(parent)
         self.window.grid_columnconfigure(0, weight=1)
@@ -1722,20 +2157,17 @@ class EagleFolderPickerDialog:
             self.window,
             placeholder_text="搜索文件夹...",
             height=INPUT_HEIGHT,
-            fg_color=COLORS["input"],
-            border_color=COLORS["border"],
-            text_color=COLORS["text"],
-            placeholder_text_color=COLORS["text_dim"],
-            corner_radius=RADIUS["control"],
-            font=FONTS["body"],
+            **ENTRY_STYLE,
         )
         self.search_entry.grid(row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["md"]), sticky="ew")
         self.search_entry.bind("<KeyRelease>", self._schedule_render)
 
         self.list_frame = ctk.CTkFrame(
             self.window,
-            fg_color=COLORS["surface"],
+            fg_color=COLORS["card"],
             corner_radius=RADIUS["card"],
+            border_width=1,
+            border_color=COLORS["border"],
         )
         self.list_frame.grid(row=2, column=0, padx=SPACE["lg"], pady=(0, SPACE["md"]), sticky="nsew")
         self.list_frame.grid_columnconfigure(0, weight=1)
@@ -1744,7 +2176,7 @@ class EagleFolderPickerDialog:
             self.list_frame,
             bg=COLORS["surface"],
             highlightthickness=1,
-            highlightbackground=COLORS["border"],
+            highlightbackground=COLORS["border_soft"],
             bd=0,
             relief="flat",
         )
@@ -1754,9 +2186,9 @@ class EagleFolderPickerDialog:
             orient="vertical",
             command=self._tree_yview,
             width=14,
-            bg=COLORS["surface_2"],
+            bg=COLORS["surface_3"],
             troughcolor=COLORS["surface"],
-            activebackground=COLORS["surface_3"],
+            activebackground=COLORS["selection_hover"],
             highlightthickness=0,
             bd=0,
         )
@@ -1777,11 +2209,38 @@ class EagleFolderPickerDialog:
         actions = ctk.CTkFrame(self.window, fg_color="transparent")
         actions.grid(row=4, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="ew")
         actions.grid_columnconfigure(1, weight=1)
-        self.refresh_button = ctk.CTkButton(actions, text="刷新", width=96, command=self.refresh)
+        self.refresh_button = ctk.CTkButton(
+            actions,
+            text="刷新",
+            width=88,
+            height=BUTTON_HEIGHT,
+            command=self.refresh,
+            corner_radius=RADIUS["control"],
+            font=FONTS["button"],
+            **BUTTON_STYLES["secondary"],
+        )
         self.refresh_button.grid(row=0, column=0, padx=(0, SPACE["sm"]), sticky="w")
-        self.cancel_button = ctk.CTkButton(actions, text="取消", width=96, command=self.window.destroy)
+        self.cancel_button = ctk.CTkButton(
+            actions,
+            text="取消",
+            width=88,
+            height=BUTTON_HEIGHT,
+            command=self.window.destroy,
+            corner_radius=RADIUS["control"],
+            font=FONTS["button"],
+            **BUTTON_STYLES["secondary"],
+        )
         self.cancel_button.grid(row=0, column=2, padx=SPACE["sm"], sticky="e")
-        self.select_button = ctk.CTkButton(actions, text="选择此文件夹", width=132, command=self.confirm_selection)
+        self.select_button = ctk.CTkButton(
+            actions,
+            text="选择此文件夹",
+            width=120,
+            height=BUTTON_HEIGHT,
+            command=self.confirm_selection,
+            corner_radius=RADIUS["control"],
+            font=FONTS["button"],
+            **BUTTON_STYLES["primary"],
+        )
         self.select_button.grid(row=0, column=3, padx=(SPACE["sm"], 0), sticky="e")
         self.select_button.configure(state="disabled")
 
@@ -1885,9 +2344,9 @@ class EagleFolderPickerDialog:
         y1 = y0 + FOLDER_ROW_HEIGHT
         selected = self.selected_folder is not None and str(self.selected_folder.get("id") or "") == folder_id
         if selected:
-            bg = COLORS["primary"]
+            bg = COLORS["selection"]
         elif self.hover_row_index == index:
-            bg = COLORS["surface_3"]
+            bg = COLORS["selection_hover"]
         else:
             bg = COLORS["surface"]
         self.tree_canvas.create_rectangle(0, y0, width, y1, fill=bg, outline="")
@@ -1918,7 +2377,7 @@ class EagleFolderPickerDialog:
             x + FOLDER_ARROW_WIDTH + 16,
             y0 + FOLDER_ROW_HEIGHT / 2,
             text=text,
-            fill=COLORS["text"] if selected else "#dbeafe",
+            fill=COLORS["text"] if selected else COLORS["text_muted"],
             font=FONTS["body"],
             anchor="w",
         )
@@ -2000,7 +2459,12 @@ def ensure_config_file(
         data = load_config_data(example)
     else:
         data = default_config_data()
-    write_config_data(data, path)
+    try:
+        write_config_data(data, path)
+    except PermissionError as exc:
+        raise RuntimeError(
+            f"无法在 {path.parent} 创建 config.json。请把程序放到可写目录后再运行。"
+        ) from exc
     return path
 
 
@@ -2262,8 +2726,8 @@ def format_folder_row_text(row: dict[str, Any]) -> str:
     count = _safe_int(folder.get("descendant_image_count") or folder.get("image_count") or 0)
     suffix = f"  ({count})" if count else ""
     if row.get("search"):
-        return f"{FOLDER_DISPLAY_ICON} {path}{suffix}"
-    return f"{FOLDER_DISPLAY_ICON} {folder.get('name') or path}{suffix}"
+        return f"{FOLDER_DISPLAY_ICON} {path}{suffix}".strip()
+    return f"{FOLDER_DISPLAY_ICON} {folder.get('name') or path}{suffix}".strip()
 
 
 def folder_row_arrow(
@@ -2454,7 +2918,9 @@ def run_instagram_login_check(config: AppConfig, url: str = DEFAULT_LOGIN_TEST_U
 
 
 def build_login_check_command(config: AppConfig, url: str) -> list[str]:
-    command = shlex.split(config.gallery_dl_executable)
+    command = resolve_gallery_dl_command(config)
+    if not command:
+        raise RuntimeError("未找到 gallery-dl，无法测试 Instagram 登录状态。")
     command.append("--config-ignore")
     command.extend(build_cookie_args(config))
     command.extend(["--simulate", "--range", "1-1", url or DEFAULT_LOGIN_TEST_URL])
@@ -2504,6 +2970,7 @@ def _sort_profiles(profiles: list[str]) -> list[str]:
 
 def run_startup_checks(config: AppConfig) -> list[str]:
     messages = ["启动检查："]
+    messages.append(f"当前运行环境：{'已打包运行' if is_frozen() else '开发环境'}")
 
     if config.eagle_api_base:
         try:
@@ -2526,13 +2993,21 @@ def run_startup_checks(config: AppConfig) -> list[str]:
         messages.append("警告：Instagram 登录 Cookie 文件不存在：<hidden>")
 
     messages.append(f"当前代理模式：{proxy_mode_label(getattr(config.proxy, 'mode', 'auto'))}")
-    gallery_ok, gallery_message = check_gallery_dl_available(config.gallery_dl_executable)
+    gallery_ok, gallery_message = check_gallery_dl_available(config)
     messages.append(gallery_message if gallery_ok else f"警告：{gallery_message}")
+    ytdlp_ok, ytdlp_message = check_ytdlp_available(config)
+    messages.append(ytdlp_message if ytdlp_ok else f"提示：{ytdlp_message}")
     return [sanitize_log_message(message, config=config) for message in messages]
 
 
-def check_gallery_dl_available(gallery_dl_executable: str) -> tuple[bool, str]:
-    command = [*shlex.split(gallery_dl_executable), "--version"]
+def check_gallery_dl_available(config: AppConfig | str) -> tuple[bool, str]:
+    if isinstance(config, str):
+        command = [*split_command(config), "--version"]
+    else:
+        command = resolve_gallery_dl_command(config)
+        if not command:
+            return False, "未找到 gallery-dl，无法下载。请确认发布包完整。"
+        command = [*command, "--version"]
     try:
         result = subprocess.run(
             command,
@@ -2547,10 +3022,35 @@ def check_gallery_dl_available(gallery_dl_executable: str) -> tuple[bool, str]:
     if result.returncode == 0:
         version = (result.stdout or result.stderr or "").strip()
         suffix = f" ({version})" if version else ""
-        return True, f"正常：gallery-dl 可用{suffix}。"
+        if len(command) >= 2 and Path(command[0]).name.lower() == GALLERY_DL_EXE_NAME:
+            return True, f"正常：已找到内置 gallery-dl.exe{suffix}。"
+        if FROZEN_GALLERY_DL_MODULE_ARG in command:
+            return True, f"正常：已内置 gallery-dl Python 模块{suffix}。"
+        return True, f"正常：开发环境 gallery-dl Python 模块可用{suffix}。"
     stderr = (result.stderr or result.stdout or "").strip()
     detail = f": {stderr}" if stderr else ""
-    return False, f"gallery-dl 检查失败，退出码 {result.returncode}{detail}"
+    return False, f"未找到 gallery-dl，检查失败，退出码 {result.returncode}{detail}"
+
+
+def check_ytdlp_available(config: AppConfig) -> tuple[bool, str]:
+    command = resolve_ytdlp_command(config)
+    if not command:
+        return False, "未找到 yt-dlp，部分视频可能使用备用下载方式。"
+    if len(command) == 1 and Path(command[0]).name.lower() == YT_DLP_EXE_NAME:
+        return True, "正常：已找到 yt-dlp.exe。"
+    try:
+        result = subprocess.run(
+            [*command, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return False, "未找到 yt-dlp，部分视频可能使用备用下载方式。"
+    if result.returncode == 0:
+        return True, "正常：yt-dlp Python 模块可用。"
+    return False, "未找到 yt-dlp，部分视频可能使用备用下载方式。"
 
 
 def resolve_config_path(config_path: str) -> Path:
@@ -2616,7 +3116,7 @@ def main() -> None:
         raise SystemExit("customtkinter is not installed. Run: py -m pip install customtkinter")
 
     ctk.set_appearance_mode("dark")
-    ctk.set_default_color_theme("blue")
+    ctk.set_default_color_theme("dark-blue")
     app = InsEagleSyncApp()
     app.mainloop()
 

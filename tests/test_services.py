@@ -148,6 +148,28 @@ def test_sync_author_service_passes_max_posts(project_tmp_path):
     assert run_mock.call_args.kwargs["date_to"] == "2026-02-01"
 
 
+def test_sync_author_service_scans_with_target_author_username(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+    request = SimpleNamespace(target_dir=project_tmp_path / "staging" / "millarc_com")
+
+    with (
+        patch("ins_eagle_sync.services.build_gallery_dl_request", return_value=request),
+        patch("ins_eagle_sync.services.run_gallery_dl", return_value=None),
+        patch("ins_eagle_sync.services.scan_staging_dir", return_value=[]) as scan_mock,
+        patch("ins_eagle_sync.services.EagleClient"),
+        patch("ins_eagle_sync.services.ImportedState.load"),
+        patch("ins_eagle_sync.services.import_staging_items", return_value=import_result(total=0, imported=0)),
+    ):
+        result = services.sync_author(
+            config,
+            "https://www.instagram.com/millarc_com/",
+            folder_id="folder-1",
+        )
+
+    assert result["ok"] is True
+    assert scan_mock.call_args.kwargs["preferred_username"] == "millarc_com"
+
+
 def test_sync_author_service_allows_unlimited_max_posts(project_tmp_path):
     config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
     request = SimpleNamespace(target_dir=project_tmp_path / "staging" / "quinn.xyz")

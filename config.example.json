@@ -1,5 +1,6 @@
 {
   "gallery_dl_executable": "py -m gallery_dl",
+  "yt_dlp_executable": "",
   "staging_dir": "E:/INS_Eagle_Sync/_staging",
   "archive_db": "E:/INS_Eagle_Sync/_cache/gallery-dl-archive.sqlite3",
   "imported_state": "E:/INS_Eagle_Sync/_cache/eagle-imported.json",

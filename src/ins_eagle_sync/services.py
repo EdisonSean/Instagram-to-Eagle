@@ -190,7 +190,11 @@ def sync_author(
     if download_result is not None and download_result.returncode != 0:
         return _service_result(False, messages=messages, returncode=download_result.returncode)
 
-    items = scan_staging_dir(request.target_dir, title_caption_chars=config.title_caption_chars)
+    items = scan_staging_dir(
+        request.target_dir,
+        title_caption_chars=config.title_caption_chars,
+        preferred_username=info.username,
+    )
     empty_result = _fail_if_no_downloaded_items(
         items,
         request.target_dir,

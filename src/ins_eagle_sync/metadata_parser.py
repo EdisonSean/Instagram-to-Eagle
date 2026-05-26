@@ -46,6 +46,7 @@ def scan_staging_dir(
     staging_dir: str | Path,
     *,
     title_caption_chars: int = DEFAULT_TITLE_CAPTION_CHARS,
+    preferred_username: str | None = None,
 ) -> list[ImportItem]:
     root = Path(staging_dir)
     media_files = sorted(
@@ -66,6 +67,7 @@ def scan_staging_dir(
                 staging_dir=root,
                 default_media_index=default_index,
                 title_caption_chars=title_caption_chars,
+                preferred_username=preferred_username,
             )
         )
     return sort_import_items(items)
@@ -98,6 +100,7 @@ def load_metadata_file(
     path: str | Path,
     *,
     title_caption_chars: int = DEFAULT_TITLE_CAPTION_CHARS,
+    preferred_username: str | None = None,
 ) -> list[ImportItem]:
     metadata_path = Path(path)
     raw = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -108,6 +111,7 @@ def load_metadata_file(
             metadata_path,
             default_media_index=index,
             title_caption_chars=title_caption_chars,
+            preferred_username=preferred_username,
         )
         for index, item in enumerate(items, start=1)
     ]
@@ -121,6 +125,7 @@ def parse_metadata_item(
     staging_dir: str | Path | None = None,
     default_media_index: int = 1,
     title_caption_chars: int = DEFAULT_TITLE_CAPTION_CHARS,
+    preferred_username: str | None = None,
 ) -> ImportItem:
     metadata_path = Path(metadata_path) if metadata_path is not None else None
     resolved_file_path = _resolve_file_path(item, metadata_path, file_path)
@@ -137,10 +142,11 @@ def parse_metadata_item(
         shortcode = _infer_shortcode_from_path(resolved_file_path, metadata_path, root)
     shortcode = shortcode or "unknown"
 
-    username = _first_text(item, "username", "owner_username", "user", "profile")
-    if not username:
-        username = _infer_username_from_path(resolved_file_path, root)
-    username = username or "unknown"
+    metadata_username = _first_text(item, "username", "owner_username", "user", "profile")
+    if not metadata_username:
+        metadata_username = _infer_username_from_path(resolved_file_path, root)
+    metadata_username = metadata_username or "unknown"
+    username = (preferred_username or "").strip() or metadata_username
 
     caption = _first_text(item, "description", "caption", "title", "content")
     date = _first_text(item, "date", "date_utc", "datetime", "post_date", "created_time", "taken_at") or None
@@ -166,6 +172,7 @@ def parse_metadata_item(
             media_index=media_index,
             source_url=source_url,
             caption=caption,
+            metadata_username=metadata_username,
         ),
         tags=build_tags(username, shortcode, hashtags),
         unique_key=build_unique_key(username, shortcode, media_index),
@@ -201,10 +208,15 @@ def build_annotation(
     media_index: int,
     source_url: str,
     caption: str,
+    metadata_username: str | None = None,
 ) -> str:
-    return "\n".join(
+    lines = [
+        f"作者: {username}",
+    ]
+    if metadata_username and metadata_username != username:
+        lines.append(f"原始作者: {metadata_username}")
+    lines.extend(
         [
-            f"作者: {username}",
             f"日期: {date or ''}",
             f"Shortcode: {shortcode}",
             f"序号: {media_index:02d}",
@@ -212,7 +224,8 @@ def build_annotation(
             "Caption 全文:",
             caption,
         ]
-    ).strip()
+    )
+    return "\n".join(lines).strip()
 
 
 def build_tags(username: str, shortcode: str, hashtags: list[str]) -> list[str]:

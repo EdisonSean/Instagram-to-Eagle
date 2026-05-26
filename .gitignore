@@ -18,6 +18,10 @@ env/
 build/
 dist/
 *.egg-info/
+*.spec
+tools/*.exe
+tools/gallery-dl.exe
+tools/yt-dlp.exe
 
 # Local configuration and secrets
 config.json

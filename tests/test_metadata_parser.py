@@ -182,6 +182,31 @@ def test_parse_metadata_item_supports_nested_user_and_title_fallback(project_tmp
     assert "art" in result.tags
 
 
+def test_scan_staging_dir_can_prefer_author_page_username(project_tmp_path):
+    media_path = project_tmp_path / "millarc_com" / "image.jpg"
+    media_path.parent.mkdir(parents=True)
+    media_path.write_bytes(b"fake image")
+    metadata = {
+        "username": "motionp_official",
+        "post_shortcode": "DX7QbKDsP9n",
+        "description": "caption",
+        "num": 1,
+        "post_url": "https://www.instagram.com/p/DX7QbKDsP9n/",
+    }
+    Path(str(media_path) + ".json").write_text(json.dumps(metadata), encoding="utf-8")
+
+    items = scan_staging_dir(project_tmp_path / "millarc_com", preferred_username="millarc_com")
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.username == "millarc_com"
+    assert item.unique_key == "instagram:millarc_com:DX7QbKDsP9n:01"
+    assert "author:millarc_com" in item.tags
+    assert "author:motionp_official" not in item.tags
+    assert "作者: millarc_com" in item.annotation
+    assert "原始作者: motionp_official" in item.annotation
+
+
 def test_build_import_title_uses_author_when_caption_is_empty():
     assert build_import_title("", "quinn.xyz") == "quinn.xyz"
 

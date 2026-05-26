@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import queue
-import shlex
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
-from .config import AppConfig
+from .config import AppConfig, resolve_gallery_dl_command, resolve_ytdlp_command
 from .proxy_utils import build_proxy_env
 from .utils import InstagramMode, detect_instagram_url
 
@@ -19,9 +19,20 @@ LogFn = Callable[[str], None]
 NO_OUTPUT_STILL_RUNNING_SECONDS = 60.0
 NO_OUTPUT_STUCK_SECONDS = 120.0
 NO_OUTPUT_POLL_SECONDS = 0.2
+DATE_FILTER_FALLBACK_MAX_POSTS = 500
+DATE_FILTER_FALLBACK_TERMINATE_SKIPS = 20
 CDN_TIMEOUT_HINT = "Instagram CDN 下载超时，gallery-dl 正在重试，可能与网络或代理有关。"
 STILL_RUNNING_HINT = "下载仍在进行。"
 POSSIBLY_STUCK_HINT = "可能卡住。"
+DATE_FILTER_FALLBACK_HINT = (
+    "提示：当前 gallery-dl 不支持原生日期停止，将使用时间过滤 + 最近 "
+    f"{DATE_FILTER_FALLBACK_MAX_POSTS} 条安全上限，并在连续跳过 "
+    f"{DATE_FILTER_FALLBACK_TERMINATE_SKIPS} 个旧文件后停止，避免作者主页翻页卡住。"
+)
+YTDLP_MISSING_HINT = (
+    "提示：未找到 yt-dlp / youtube-dl。gallery-dl 会尝试备用下载方式；"
+    "如果视频下载失败，请确认发布包 tools/yt-dlp.exe 存在。"
+)
 
 
 @dataclass(frozen=True)
@@ -94,7 +105,10 @@ def build_gallery_dl_command(
     date_to = _optional_date_filter(date_to, "date_to")
     if info.mode == InstagramMode.AUTHOR and (effective_max_posts == 0 or effective_max_posts < -1):
         raise ValueError("max_posts must be -1 or greater than 0")
-    command = shlex.split(config.gallery_dl_executable)
+    command = resolve_gallery_dl_command(config)
+    if not command:
+        raise RuntimeError("未找到 gallery-dl，无法下载。请确认发布包完整。")
+    command_prefix = tuple(command)
     command.append("--config-ignore")
     if verbose:
         command.append("--verbose")
@@ -103,13 +117,30 @@ def build_gallery_dl_command(
     if not ignore_archive:
         command.extend(["--download-archive", str(config.archive_db)])
     command.extend(["--sleep-request", config.download.sleep_request])
+    range_was_added = False
     if info.mode == InstagramMode.AUTHOR and effective_max_posts != -1:
         command.extend(["--range", f"1-{effective_max_posts}"])
+        range_was_added = True
     if info.mode == InstagramMode.AUTHOR:
-        if date_from:
-            command.extend(["--date-after", date_from])
-        if date_to:
-            command.extend(["--date-before", date_to])
+        if date_from or date_to:
+            if gallery_dl_supports_date_options(command_prefix):
+                if date_from:
+                    command.extend(["--date-after", date_from])
+                if date_to:
+                    command.extend(["--date-before", date_to])
+            else:
+                post_filter = build_gallery_dl_date_filter(date_from=date_from, date_to=date_to)
+                if post_filter:
+                    command.extend(["--post-filter", post_filter])
+                    fallback_range_was_added = False
+                    if not range_was_added:
+                        command.extend(["--range", f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}"])
+                        fallback_range_was_added = True
+                    if should_terminate_date_filter_fallback(
+                        date_from=date_from,
+                        fallback_range_was_added=fallback_range_was_added,
+                    ):
+                        command.extend(["--terminate", str(DATE_FILTER_FALLBACK_TERMINATE_SKIPS)])
     command.extend(["--directory", str(target_dir), url])
     return command
 
@@ -125,6 +156,36 @@ def build_cookie_args(config: AppConfig) -> list[str]:
         return ["--cookies-from-browser", config.cookies.from_browser]
 
     raise ValueError("cookies.enabled is true, but no cookies.file or cookies.from_browser is configured")
+
+
+@lru_cache(maxsize=16)
+def gallery_dl_supports_date_options(command_prefix: tuple[str, ...]) -> bool:
+    if not command_prefix:
+        return False
+    try:
+        result = subprocess.run(
+            [*command_prefix, "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return False
+    help_text = f"{result.stdout}\n{result.stderr}"
+    return "--date-after" in help_text and "--date-before" in help_text
+
+
+def command_uses_date_filter_fallback(command: list[str]) -> bool:
+    return "--post-filter" in command and f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}" in command
+
+
+def should_terminate_date_filter_fallback(
+    *,
+    date_from: str | None,
+    fallback_range_was_added: bool,
+) -> bool:
+    return bool(date_from and fallback_range_was_added)
 
 
 def run_gallery_dl(
@@ -149,6 +210,8 @@ def run_gallery_dl(
         date_to=date_to,
     )
     log_gallery_dl_request(request, dry_run=dry_run, log=log)
+    if command_uses_date_filter_fallback(request.command):
+        log(DATE_FILTER_FALLBACK_HINT)
 
     missing_cookie_result = validate_cookie_file(config, request, dry_run=dry_run, log=log)
     if missing_cookie_result is not None:
@@ -194,6 +257,7 @@ def run_subprocess_realtime(
 
     stream_headers_logged: set[str] = set()
     timeout_hint_logged = False
+    ytdlp_hint_logged = False
     still_running_logged = False
     stuck_logged = False
     finished_streams = 0
@@ -238,6 +302,9 @@ def run_subprocess_realtime(
             if is_network_timeout_warning(text) and not timeout_hint_logged:
                 log(CDN_TIMEOUT_HINT)
                 timeout_hint_logged = True
+            if is_ytdlp_missing_warning(text) and not ytdlp_hint_logged:
+                log(YTDLP_MISSING_HINT)
+                ytdlp_hint_logged = True
 
     returncode = process.wait()
     return subprocess.CompletedProcess(
@@ -292,13 +359,14 @@ def validate_cookie_file(
 def build_subprocess_env(config: AppConfig) -> dict[str, str] | None:
     mode = getattr(config.proxy, "mode", "manual" if config.proxy.enabled else "none")
     if mode == "manual" and not config.proxy.http_proxy and not config.proxy.https_proxy:
-        return build_proxy_env(config.proxy)
-    if mode in {"auto", "manual", "none"}:
-        return build_proxy_env(config.proxy)
-    if not config.proxy.enabled:
-        return build_proxy_env(config.proxy)
-
-    return build_proxy_env(config.proxy)
+        env = build_proxy_env(config.proxy)
+    elif mode in {"auto", "manual", "none"}:
+        env = build_proxy_env(config.proxy)
+    elif not config.proxy.enabled:
+        env = build_proxy_env(config.proxy)
+    else:
+        env = build_proxy_env(config.proxy)
+    return _add_ytdlp_tools_to_path(env, config)
 
 
 def log_proxy_status(config: AppConfig, *, env: dict[str, str] | None, log: LogFn) -> None:
@@ -370,6 +438,8 @@ def log_gallery_dl_result(
             )
         if is_network_timeout_warning(stderr):
             log(CDN_TIMEOUT_HINT)
+        if is_ytdlp_missing_warning(stderr):
+            log(YTDLP_MISSING_HINT)
 
     metadata_files = find_metadata_files(target_dir) if target_dir.exists() else []
     log(f"metadata JSON files found: {len(metadata_files)}")
@@ -402,6 +472,25 @@ def is_network_timeout_warning(text: str) -> bool:
         or "httpsconnectionpool" in lowered
         or ("downloader.http" in lowered and "warning" in lowered)
     )
+
+
+def is_ytdlp_missing_warning(text: str) -> bool:
+    lowered = text.lower()
+    return "cannot import yt-dlp or youtube-dl" in lowered
+
+
+def _add_ytdlp_tools_to_path(env: dict[str, str] | None, config: AppConfig) -> dict[str, str] | None:
+    ytdlp_command = resolve_ytdlp_command(config)
+    if not ytdlp_command or len(ytdlp_command) != 1:
+        return env
+    executable = Path(ytdlp_command[0])
+    if executable.name.lower() != "yt-dlp.exe" or not executable.exists():
+        return env
+    updated = dict(env or {})
+    current_path = updated.get("PATH", "")
+    tool_dir = str(executable.parent)
+    updated["PATH"] = f"{tool_dir};{current_path}" if current_path else tool_dir
+    return updated
 
 
 def format_command_for_log(command: list[str]) -> str:
@@ -452,6 +541,41 @@ def _optional_date_filter(value: str | None, name: str) -> str | None:
         except ValueError as exc:
             raise ValueError(f"{name} must be an ISO date, ISO datetime, or Unix timestamp") from exc
     return text
+
+
+def build_gallery_dl_date_filter(*, date_from: str | None, date_to: str | None) -> str | None:
+    parts = []
+    if date_from:
+        parts.append(f"date >= {_datetime_filter_literal(date_from)}")
+    if date_to:
+        parts.append(f"date < {_datetime_filter_literal(date_to)}")
+    if not parts:
+        return None
+    return "date and " + " and ".join(parts)
+
+
+def _datetime_filter_literal(value: str) -> str:
+    parsed = _parse_filter_datetime(value)
+    return (
+        "datetime("
+        f"{parsed.year}, {parsed.month}, {parsed.day}, "
+        f"{parsed.hour}, {parsed.minute}, {parsed.second}"
+        ")"
+    )
+
+
+def _parse_filter_datetime(value: str) -> datetime:
+    if _is_unix_timestamp(value):
+        return datetime.fromtimestamp(int(value), tz=timezone.utc).replace(tzinfo=None)
+    text = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        parsed_date = date.fromisoformat(value)
+        return datetime(parsed_date.year, parsed_date.month, parsed_date.day)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed.replace(microsecond=0)
 
 
 def _is_unix_timestamp(value: str) -> bool:
