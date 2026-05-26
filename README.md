@@ -1,6 +1,7 @@
-# ins-eagle-sync
+@import "assets/icon.png" {width="300px"}
+# Instagram to Eagle
 
-`ins-eagle-sync` 是一个 Windows 优先的 Python 工具，用 `gallery-dl` 下载 Instagram 内容到本地 staging 目录，再读取 metadata JSON，通过 Eagle Local API 导入 Eagle。
+**Instagram to Eagle** 是一个 Windows 优先的 Python 工具，用 `gallery-dl` 下载 Instagram 内容到本地 staging 目录，再读取 metadata JSON，通过 Eagle Local API 导入 Eagle。
 
 项目提供 GUI 和 CLI 两种入口。下载文件只会进入配置的 staging 目录，不会直接写入 Eagle 资源库。
 
