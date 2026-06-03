@@ -117,6 +117,55 @@ def test_sync_post_service_downloads_then_imports(project_tmp_path):
     assert run_mock.call_args.kwargs["dry_run"] is True
 
 
+def test_sync_post_service_moves_downloaded_post_under_author_directory(project_tmp_path):
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+    source_dir = project_tmp_path / "staging" / "unknown" / "ABC123"
+    source_dir.mkdir(parents=True)
+    media_path = source_dir / "media_01.jpg"
+    media_path.write_bytes(b"fake image")
+    Path(str(media_path) + ".json").write_text(
+        json.dumps(
+            {
+                "username": "artist.name",
+                "post_shortcode": "ABC123",
+                "description": "caption",
+                "num": 1,
+                "post_url": "https://www.instagram.com/p/ABC123/",
+            }
+        ),
+        encoding="utf-8",
+    )
+    logs = []
+    request = SimpleNamespace(target_dir=source_dir)
+
+    with (
+        patch("ins_eagle_sync.services.build_gallery_dl_request", return_value=request),
+        patch(
+            "ins_eagle_sync.services.run_gallery_dl",
+            return_value=CompletedProcess(args=["gallery-dl"], returncode=0, stdout="", stderr=""),
+        ),
+        patch("ins_eagle_sync.services.EagleClient"),
+        patch("ins_eagle_sync.services.ImportedState.load"),
+        patch("ins_eagle_sync.services.import_staging_items", return_value=import_result()) as import_mock,
+    ):
+        result = services.sync_post(
+            config,
+            "https://www.instagram.com/p/ABC123/",
+            folder_id="folder-1",
+            log=logs.append,
+        )
+
+    moved_media_path = project_tmp_path / "staging" / "artist.name" / "ABC123" / "media_01.jpg"
+    imported_items = import_mock.call_args.args[0]
+    assert result["ok"] is True
+    assert moved_media_path.exists()
+    assert Path(str(moved_media_path) + ".json").exists()
+    assert not source_dir.exists()
+    assert imported_items[0].file_path == moved_media_path
+    assert imported_items[0].username == "artist.name"
+    assert any("已按作者整理缓存目录" in message for message in logs)
+
+
 def test_sync_posts_service_accepts_multiple_post_urls(project_tmp_path):
     config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
     logs = []

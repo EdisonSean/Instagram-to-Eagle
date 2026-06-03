@@ -235,6 +235,27 @@ class FakeWindow:
         self.destroyed = True
 
 
+class FakeFolderDialog:
+    created = 0
+
+    def __init__(self, *args, **kwargs) -> None:
+        type(self).created += 1
+        self.open = True
+        self.focused = 0
+        self.on_close = kwargs.get("on_close")
+
+    def is_open(self) -> bool:
+        return self.open
+
+    def focus(self) -> None:
+        self.focused += 1
+
+    def close(self) -> None:
+        self.open = False
+        if self.on_close is not None:
+            self.on_close()
+
+
 class RaisingBuildParent:
     def grid_columnconfigure(self, *args, **kwargs) -> None:
         raise AssertionError("builder should not touch parent when already built")
@@ -701,6 +722,27 @@ def test_stop_button_uses_danger_style_while_running() -> None:
 
     assert app.stop_button.configures[-1]["state"] == "disabled"
     assert app.stop_button.configures[-1]["fg_color"] == gui.COLORS["surface_3"]
+
+
+def test_eagle_folder_picker_reuses_existing_dialog(monkeypatch) -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.config = SimpleNamespace(eagle_api_base="http://localhost:41595")
+    app.folder_picker_dialog = None
+    app._append_log = lambda _message: None
+    FakeFolderDialog.created = 0
+    monkeypatch.setattr(gui, "EagleFolderPickerDialog", FakeFolderDialog)
+
+    gui.InsEagleSyncApp._open_eagle_folder_picker(app, initial_folder_id=None, on_select=lambda _selection: None)
+    first_dialog = app.folder_picker_dialog
+    gui.InsEagleSyncApp._open_eagle_folder_picker(app, initial_folder_id=None, on_select=lambda _selection: None)
+
+    assert FakeFolderDialog.created == 1
+    assert app.folder_picker_dialog is first_dialog
+    assert first_dialog.focused == 1
+
+    first_dialog.close()
+
+    assert app.folder_picker_dialog is None
 
 
 def test_window_icon_missing_does_not_crash(monkeypatch, project_tmp_path) -> None:

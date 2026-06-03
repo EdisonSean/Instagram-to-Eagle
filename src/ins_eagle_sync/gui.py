@@ -227,6 +227,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._is_resizing = False
         self._resize_after_id: str | None = None
         self.cancel_event = threading.Event()
+        self.folder_picker_dialog: EagleFolderPickerDialog | None = None
         self._resize_debug_enabled = os.environ.get("INS_EAGLE_SYNC_RESIZE_DEBUG") == "1"
         self.resize_debug_stats = {
             "root_configure_events": 0,
@@ -1719,20 +1720,30 @@ class InsEagleSyncApp(_BaseWindow):
         initial_folder_id: str | None,
         on_select: Callable[[dict[str, str]], None],
     ) -> None:
+        existing_dialog = getattr(self, "folder_picker_dialog", None)
+        if existing_dialog is not None and existing_dialog.is_open():
+            existing_dialog.focus()
+            return
+        self.folder_picker_dialog = None
         if not self.config.eagle_api_base:
             message = "无法连接 Eagle。请先打开 Eagle，并确认本地 API 地址正确。"
             self._append_log(message)
             return
         try:
-            EagleFolderPickerDialog(
+            self.folder_picker_dialog = EagleFolderPickerDialog(
                 self,
                 config=self.config,
                 initial_folder_id=initial_folder_id,
                 on_select=on_select,
                 log=self._append_log,
+                on_close=self._clear_eagle_folder_picker,
             )
         except Exception as exc:  # noqa: BLE001 - user-facing GUI error.
+            self.folder_picker_dialog = None
             self._append_log(folder_picker_error_message([str(exc)]))
+
+    def _clear_eagle_folder_picker(self) -> None:
+        self.folder_picker_dialog = None
 
     def _apply_sync_folder_selection(self, selection: dict[str, str]) -> None:
         self.selected_folder_id = selection.get("folder_id") or None
@@ -2205,6 +2216,7 @@ class EagleFolderPickerDialog:
         initial_folder_id: str | None = None,
         on_select: Callable[[dict[str, str]], None],
         log: Callable[[str], None] | None = None,
+        on_close: Callable[[], None] | None = None,
     ) -> None:
         if ctk is None:
             raise RuntimeError("customtkinter is not installed")
@@ -2213,6 +2225,8 @@ class EagleFolderPickerDialog:
         self.initial_folder_id = initial_folder_id
         self.on_select = on_select
         self.log = log
+        self.on_close = on_close
+        self.closed = False
         self.folders: list[dict[str, Any]] = []
         self.folder_by_id: dict[str, dict[str, Any]] = {}
         self.children_by_parent: dict[str | None, list[dict[str, Any]]] = {}
@@ -2228,6 +2242,7 @@ class EagleFolderPickerDialog:
         center_window(self.window, 760, 620)
         self.window.minsize(620, 460)
         self.window.transient(parent)
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.grid_columnconfigure(0, weight=1)
         self.window.grid_rowconfigure(2, weight=1)
 
@@ -2306,7 +2321,7 @@ class EagleFolderPickerDialog:
             text="取消",
             width=88,
             height=BUTTON_HEIGHT,
-            command=self.window.destroy,
+            command=self.close,
             corner_radius=RADIUS["control"],
             font=FONTS["button"],
             **BUTTON_STYLES["secondary"],
@@ -2326,6 +2341,38 @@ class EagleFolderPickerDialog:
         self.select_button.configure(state="disabled")
 
         self.window.after(50, self.refresh)
+
+    def is_open(self) -> bool:
+        if self.closed:
+            return False
+        try:
+            return bool(self.window.winfo_exists())
+        except Exception:  # noqa: BLE001 - destroyed windows can fail Tk calls.
+            return False
+
+    def focus(self) -> None:
+        try:
+            self.window.lift()
+            self.window.focus_force()
+        except Exception:  # noqa: BLE001 - best-effort focus.
+            pass
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            if self.search_after_id is not None:
+                self.window.after_cancel(self.search_after_id)
+                self.search_after_id = None
+        except Exception:  # noqa: BLE001 - close should continue.
+            pass
+        try:
+            self.window.destroy()
+        except Exception:  # noqa: BLE001 - window may already be gone.
+            pass
+        if self.on_close is not None:
+            self.on_close()
 
     def refresh(self) -> None:
         self.message_var.set("正在读取 Eagle 文件夹...")
@@ -2397,7 +2444,7 @@ class EagleFolderPickerDialog:
             self.message_var.set("请先选择一个 Eagle 文件夹。")
             return
         self.on_select(folder_selection_result(self.selected_folder))
-        self.window.destroy()
+        self.close()
 
     def _draw_tree(self) -> None:
         self.tree_canvas.delete("all")

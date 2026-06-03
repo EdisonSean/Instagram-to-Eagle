@@ -229,7 +229,7 @@ def build_annotation(
 
 
 def build_tags(username: str, shortcode: str, hashtags: list[str]) -> list[str]:
-    return ["instagram", f"author:{username}"]
+    return []
 
 
 def build_unique_key(username: str, shortcode: str, media_index: int) -> str:

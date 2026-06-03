@@ -79,10 +79,7 @@ def test_parse_gallery_dl_instagram_fields_prefers_post_shortcode(project_tmp_pa
     assert "DYld7hQCT90" not in result.title
     assert "_02" not in result.title
     assert result.unique_key == "instagram:quinn.xyz:DYld7hQCT90:02"
-    assert result.tags == [
-        "instagram",
-        "author:quinn.xyz",
-    ]
+    assert result.tags == []
     assert result.hashtags == ["travel", "night"]
     assert "shortcode:DYld7hQCT90" not in result.tags
     assert "作者: quinn.xyz" in result.annotation
@@ -157,7 +154,7 @@ def test_scan_staging_dir_uses_path_fallbacks_without_metadata(project_tmp_path)
     assert item.title == "Instagram Post"
     assert item.website == "https://www.instagram.com/p/FALLBACK1/"
     assert item.unique_key == "instagram:unknown:FALLBACK1:03"
-    assert item.tags == ["instagram", "author:unknown"]
+    assert item.tags == []
 
 
 def test_parse_metadata_item_supports_nested_user_and_title_fallback(project_tmp_path):
@@ -201,7 +198,8 @@ def test_scan_staging_dir_can_prefer_author_page_username(project_tmp_path):
     item = items[0]
     assert item.username == "millarc_com"
     assert item.unique_key == "instagram:millarc_com:DX7QbKDsP9n:01"
-    assert "author:millarc_com" in item.tags
+    assert item.tags == []
+    assert "author:millarc_com" not in item.tags
     assert "author:motionp_official" not in item.tags
     assert "作者: millarc_com" in item.annotation
     assert "原始作者: motionp_official" in item.annotation

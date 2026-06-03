@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -121,6 +122,14 @@ def sync_post(
     )
     if empty_result is not None:
         return empty_result
+    if download_result is not None:
+        _target_dir, items = organize_post_items_by_author(
+            config,
+            request.target_dir,
+            items,
+            title_caption_chars=config.title_caption_chars,
+            log=logger,
+        )
     if _is_cancelled(cancel_event):
         return _cancelled_service_result(messages, log=logger)
 
@@ -334,6 +343,93 @@ def sync_author(
         messages=messages,
         log=logger,
     )
+
+
+def organize_post_items_by_author(
+    config: AppConfig,
+    source_dir: Path,
+    items: list[ImportItem],
+    *,
+    title_caption_chars: int,
+    log: LogFn,
+) -> tuple[Path, list[ImportItem]]:
+    target_dir = post_author_staging_dir(config, items)
+    if target_dir is None or target_dir == source_dir:
+        return source_dir, items
+
+    source_dir = Path(source_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    moved_count = 0
+    for item in items:
+        for file_path in _item_files_to_move(item):
+            if not _is_file_within(file_path, source_dir):
+                continue
+            destination = target_dir / file_path.relative_to(source_dir)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                if _same_path(file_path, destination):
+                    continue
+                destination.unlink()
+            shutil.move(str(file_path), str(destination))
+            moved_count += 1
+
+    _remove_empty_dirs(source_dir, stop_at=config.staging_dir)
+    if moved_count:
+        log(f"单帖模式：已按作者整理缓存目录：{target_dir}")
+    return target_dir, scan_staging_dir(target_dir, title_caption_chars=title_caption_chars)
+
+
+def post_author_staging_dir(config: AppConfig, items: list[ImportItem]) -> Path | None:
+    username = next((item.username for item in items if item.username and item.username.lower() != "unknown"), "")
+    shortcode = next((item.shortcode for item in items if item.shortcode and item.shortcode.lower() != "unknown"), "")
+    if not username or not shortcode:
+        return None
+    return config.staging_dir / _safe_staging_component(username, fallback="unknown") / _safe_staging_component(
+        shortcode,
+        fallback="unknown",
+    )
+
+
+def _item_files_to_move(item: ImportItem) -> list[Path]:
+    paths = [Path(item.file_path)]
+    metadata_path = getattr(item, "metadata_path", None)
+    if metadata_path is not None:
+        paths.append(Path(metadata_path))
+    return paths
+
+
+def _safe_staging_component(value: str, *, fallback: str) -> str:
+    invalid = '<>:"/\\|?*'
+    cleaned = "".join("_" if char in invalid or ord(char) < 32 else char for char in value.strip()).strip(" .")
+    return cleaned or fallback
+
+
+def _is_file_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return path.is_file()
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return str(left) == str(right)
+
+
+def _remove_empty_dirs(path: Path, *, stop_at: Path) -> None:
+    current = path
+    stop_at = stop_at.resolve()
+    while True:
+        try:
+            if current.resolve() == stop_at or not current.exists():
+                return
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
 
 
 def verify_imports(
