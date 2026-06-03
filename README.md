@@ -11,6 +11,50 @@
 
 项目提供 GUI 和 CLI 两种入口。下载文件只会进入配置的 staging 目录，不会直接写入 Eagle 资源库。
 
+# Part 1 客户端使用说明
+
+如果你只是使用已经打包好的 Windows 版本，不需要安装 Python、`gallery-dl` 或 `yt-dlp`。
+
+1. 到 [GitHub Releases](https://github.com/EdisonSean/Instagram-to-Eagle/releases) 下载最新发布包。
+2. 解压整个发布包，不要只单独拿出 `Instagram to Eagle.exe`。
+3. 双击运行：
+   ```text
+   Instagram to Eagle.exe
+   ```
+4. 启动 Eagle，并保持 Eagle 正在运行。程序会通过 Eagle Local API 导入素材。
+5. 首次使用时进入“设置”页，确认：
+   - 存储下载文件的父级文件夹
+   - Eagle 本地 API 地址，默认通常是 `http://localhost:41595`
+   - Instagram 登录方式
+   - 代理模式
+6. 推荐登录方式是 `cookies.txt`。如果浏览器读取登录状态失败，请改用 `cookies.txt` 模式。
+7. 在“同步”页选择：
+   - “单个帖子”：可粘贴一个或多个 `/p/`、`/reel/`、`/tv/` 链接，一行一个最方便。
+   - “作者主页”：粘贴一个作者主页链接，并选择同步范围。
+8. 选择 Eagle 导入位置，然后点击“开始同步”。
+
+发布包通常应包含：
+
+```text
+Instagram to Eagle/
+├── Instagram to Eagle.exe
+├── README.md
+├── config.example.json
+├── assets/
+├── tools/
+│   └── yt-dlp.exe          推荐包含，用于减少部分视频下载 warning
+└── _internal/
+```
+
+说明：
+
+- `config.json` 会在你首次保存设置时生成，不会内置在发布包里。
+- `cookies.txt` 不会内置，用户需要自己导出并在设置页选择。
+- 你的设置、cookies 路径、保存地址等不会因为重新打开 exe 自动清空。
+- 更新版本时，建议先关闭旧版程序，再使用新的发布包运行。
+- 如果日志提示 `yt-dlp` 缺失，通常不一定代表失败；gallery-dl 会尝试备用下载方式。
+- 如果日志提示 Instagram 登录、403、401 或跳转登录页，优先重新导出 `cookies.txt`。
+
 ## 功能概览
 
 - GUI 同步页和设置页，适合日常使用。
@@ -24,6 +68,7 @@
 - 去重：用 `imported_state` 记录 `unique_key -> eagle_item_id`。
 - Eagle 删除校验：用 `--verify-eagle` 检查 Eagle item 是否仍存在且仍属于目标文件夹。
 
+# Part 2 CLI使用说明
 ## 安装
 
 建议使用 Windows 的 `py` 启动器。

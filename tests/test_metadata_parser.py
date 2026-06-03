@@ -82,9 +82,8 @@ def test_parse_gallery_dl_instagram_fields_prefers_post_shortcode(project_tmp_pa
     assert result.tags == [
         "instagram",
         "author:quinn.xyz",
-        "travel",
-        "night",
     ]
+    assert result.hashtags == ["travel", "night"]
     assert "shortcode:DYld7hQCT90" not in result.tags
     assert "作者: quinn.xyz" in result.annotation
     assert "日期: 2026-01-15 08:30:00" in result.annotation
@@ -179,7 +178,8 @@ def test_parse_metadata_item_supports_nested_user_and_title_fallback(project_tmp
     assert result.shortcode == "POST999"
     assert result.media_index == 4
     assert result.caption == "Title caption #Art"
-    assert "art" in result.tags
+    assert result.hashtags == ["art"]
+    assert "art" not in result.tags
 
 
 def test_scan_staging_dir_can_prefer_author_page_username(project_tmp_path):
