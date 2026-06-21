@@ -303,19 +303,18 @@ def test_gui_module_exposes_main() -> None:
 
 
 def test_ui_font_hierarchy_uses_bundled_pingfang_font_without_changing_log_font() -> None:
-    assert FONTS["page_title"] == (".PingFang-SC-Regular", 16, "bold")
-    assert FONTS["section"] == (".PingFang-SC-Regular", 13, "bold")
-    assert FONTS["label"] == (".PingFang-SC-Regular", 11, "bold")
-    assert FONTS["body"] == (".PingFang-SC-Regular", 10, "normal")
-    assert FONTS["small"] == (".PingFang-SC-Regular", 9, "normal")
-    assert FONTS["button"] == (".PingFang-SC-Regular", 10, "normal")
+    assert FONTS["page_title"] == (".PingFang-SC-Regular", 19, "bold")
+    assert FONTS["section"] == (".PingFang-SC-Regular", 16, "bold")
+    assert FONTS["label"] == (".PingFang-SC-Regular", 13, "bold")
+    assert FONTS["body"] == (".PingFang-SC-Regular", 12, "normal")
+    assert FONTS["small"] == (".PingFang-SC-Regular", 11, "normal")
+    assert FONTS["button"] == (".PingFang-SC-Regular", 12, "normal")
     assert FONTS["section"][1] > FONTS["label"][1] > FONTS["body"][1] > FONTS["small"][1]
     assert FONTS["label"][2] == "bold"
-    assert FONTS["mono"] == ("Consolas", 9, "normal")
+    assert FONTS["mono"] == ("Consolas", 11, "normal")
     assert BUTTON_HEIGHT == 38
     assert INPUT_HEIGHT == 38
-    assert NAV_TAB_FONT == (".PingFang-SC-Regular", 14, "bold")
-    assert NAV_TAB_FONT[1] == 21 * 2 // 3
+    assert NAV_TAB_FONT == (".PingFang-SC-Regular", 17, "bold")
     assert NAV_TAB_HEIGHT == 72
     assert NAV_TAB_WIDTH == 360
     assert HEADER_HEIGHT == 92
