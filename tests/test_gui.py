@@ -16,6 +16,7 @@ from ins_eagle_sync.ui_theme import (
     NAV_TAB_FONT,
     NAV_TAB_HEIGHT,
     NAV_TAB_WIDTH,
+    SPACE,
 )
 
 
@@ -319,6 +320,7 @@ def test_ui_font_hierarchy_uses_bundled_pingfang_font_without_changing_log_font(
     assert NAV_TAB_WIDTH == 360
     assert HEADER_HEIGHT == 92
     assert FONT_RESOURCE_RELATIVE_PATH.as_posix() == "assets/fonts/pingfang-sc-regular.ttf"
+    assert SPACE == {"xs": 6, "sm": 10, "md": 16, "lg": 22, "xl": 32}
 
 
 def test_resolve_config_path_falls_back_to_example(monkeypatch, project_tmp_path) -> None:
