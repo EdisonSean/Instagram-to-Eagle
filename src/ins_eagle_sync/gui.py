@@ -484,12 +484,21 @@ class InsEagleSyncApp(_BaseWindow):
     def _place_main_layout(self, *, show_cookie_guide: bool) -> None:
         content_row = 2 if show_cookie_guide else 1
         status_row = content_row + 1
+        log_visible = getattr(self, "log_panel_visible", True)
         self.grid_rowconfigure(1, weight=0 if show_cookie_guide else 1)
         self.grid_rowconfigure(2, weight=1 if show_cookie_guide else 0)
         self.grid_rowconfigure(3, weight=0)
+        self.grid_columnconfigure(1, weight=0, minsize=LOG_PANEL_WIDTH if log_visible else 0)
         if hasattr(self, "main_panel"):
-            self.main_panel.grid(row=content_row, column=0, sticky="nsew", padx=(12, 6), pady=(0, 10))
-        if hasattr(self, "log_panel"):
+            self.main_panel.grid(
+                row=content_row,
+                column=0,
+                columnspan=1 if log_visible else 2,
+                sticky="nsew",
+                padx=(12, 6 if log_visible else 12),
+                pady=(0, 10),
+            )
+        if hasattr(self, "log_panel") and log_visible:
             self.log_panel.grid(row=content_row, column=1, sticky="nsew", padx=(6, 12), pady=(0, 10))
         if hasattr(self, "status_bar"):
             self.status_bar.grid(row=status_row, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
@@ -1776,10 +1785,11 @@ class InsEagleSyncApp(_BaseWindow):
             self.log_panel.grid_remove()
             self.log_panel_visible = False
             self.toggle_log_button.configure(text="显示日志")
+            self._place_main_layout(show_cookie_guide=should_show_cookie_setup_guide(self.config))
             return
 
-        self.log_panel.grid()
         self.log_panel_visible = True
+        self._place_main_layout(show_cookie_guide=should_show_cookie_setup_guide(self.config))
         self.toggle_log_button.configure(text="隐藏日志")
         self.log_text.see("end")
 

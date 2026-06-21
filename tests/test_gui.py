@@ -946,24 +946,51 @@ def test_hidden_cookie_setup_guide_does_not_reserve_top_layout_row() -> None:
     app.main_panel = FakeFrame()
     app.log_panel = FakeFrame()
     app.status_bar = FakeFrame()
+    app.log_panel_visible = True
     row_weights = {}
+    column_weights = {}
     app.grid_rowconfigure = lambda row, **kwargs: row_weights.update({row: kwargs})
+    app.grid_columnconfigure = lambda column, **kwargs: column_weights.update({column: kwargs})
 
     gui.InsEagleSyncApp._place_main_layout(app, show_cookie_guide=False)
 
     assert app.main_panel.grid_calls[-1][1]["row"] == 1
+    assert app.main_panel.grid_calls[-1][1]["columnspan"] == 1
     assert app.log_panel.grid_calls[-1][1]["row"] == 1
     assert app.status_bar.grid_calls[-1][1]["row"] == 2
     assert row_weights[1]["weight"] == 1
     assert row_weights[2]["weight"] == 0
+    assert column_weights[1]["minsize"] == gui.LOG_PANEL_WIDTH
 
     gui.InsEagleSyncApp._place_main_layout(app, show_cookie_guide=True)
 
     assert app.main_panel.grid_calls[-1][1]["row"] == 2
+    assert app.main_panel.grid_calls[-1][1]["columnspan"] == 1
     assert app.log_panel.grid_calls[-1][1]["row"] == 2
     assert app.status_bar.grid_calls[-1][1]["row"] == 3
     assert row_weights[1]["weight"] == 0
     assert row_weights[2]["weight"] == 1
+
+
+def test_hidden_log_panel_lets_main_panel_fill_right_side() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.main_panel = FakeFrame()
+    app.log_panel = FakeFrame()
+    app.status_bar = FakeFrame()
+    app.log_panel_visible = False
+    row_weights = {}
+    column_weights = {}
+    app.grid_rowconfigure = lambda row, **kwargs: row_weights.update({row: kwargs})
+    app.grid_columnconfigure = lambda column, **kwargs: column_weights.update({column: kwargs})
+
+    gui.InsEagleSyncApp._place_main_layout(app, show_cookie_guide=False)
+
+    assert app.main_panel.grid_calls[-1][1]["row"] == 1
+    assert app.main_panel.grid_calls[-1][1]["columnspan"] == 2
+    assert app.main_panel.grid_calls[-1][1]["padx"] == (12, 12)
+    assert app.log_panel.grid_calls == []
+    assert column_weights[1]["minsize"] == 0
+    assert row_weights[1]["weight"] == 1
 
 
 def test_login_check_browser_command_log_hides_profile(project_tmp_path) -> None:
