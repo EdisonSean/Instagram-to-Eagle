@@ -628,6 +628,43 @@ class InsEagleSyncApp(_BaseWindow):
         self._sync_tab_built = True
         parent.grid_columnconfigure(0, weight=1)
 
+        destination = self._card(parent, 0, "1. 导入位置", "▱", columns=3)
+        destination.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(destination, text="Eagle 导入位置", text_color=COLORS["text"], font=FONTS["label"]).grid(
+            row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w"
+        )
+        self.folder_path_entry = self._entry(destination, placeholder="例如：Instagram/quinn.xyz")
+        self.folder_path_entry.grid(row=1, column=1, padx=(0, SPACE["sm"]), pady=(0, SPACE["lg"]), sticky="ew")
+        self.folder_path_entry.bind("<KeyRelease>", self._sync_folder_path_changed)
+        self.browse_folder_button = self._button(
+            destination,
+            "选择 Eagle 文件夹",
+            self.choose_sync_eagle_folder,
+            kind="secondary",
+            width=136,
+        )
+        self.browse_folder_button.grid(row=1, column=2, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]))
+
+        actions = self._card(parent, 1, "2. 开始同步", "▷", columns=7)
+        for column in range(7):
+            actions.grid_columnconfigure(column, weight=1)
+
+        self.sync_button = self._button(actions, "开始同步", self.start_sync, kind="primary", width=140)
+        self.sync_button.grid(row=1, column=0, padx=(SPACE["lg"], SPACE["sm"]), pady=(0, SPACE["lg"]), sticky="ew")
+        self.stop_button = self._button(actions, "停止", self.stop_sync, width=88)
+        self.stop_button.grid(row=1, column=1, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
+        self.stop_button.configure(state="disabled")
+        self.preview_button = self._button(actions, "预览", self.preview, width=100)
+        self.preview_button.grid(row=1, column=2, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
+        self.folder_button = self._button(actions, "检查 Eagle 文件夹", self.ensure_folder, width=140)
+        self.folder_button.grid(row=1, column=3, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
+        self.open_staging_button = self._button(actions, "打开缓存目录", self.open_staging_dir, width=128)
+        self.open_staging_button.grid(row=1, column=4, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
+        self.open_config_button = self._button(actions, "打开配置目录", self.open_config_dir, width=128)
+        self.open_config_button.grid(row=1, column=5, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
+        self.open_readme_button = self._button(actions, "打开说明", self.open_readme, width=110)
+        self.open_readme_button.grid(row=1, column=6, padx=(SPACE["sm"], SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="ew")
+
         source = self._card(parent, 2, "3. 来源", "⌁", columns=4)
         source.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(source, text="Instagram 链接", text_color=COLORS["text"], font=FONTS["label"]).grid(
@@ -747,43 +784,6 @@ class InsEagleSyncApp(_BaseWindow):
         self.date_range_choice.grid(row=0, column=1, sticky="e")
         self._set_entry(self.date_range_amount_entry, "1")
         self.date_range_choice.set(DATE_RANGE_DAY)
-
-        destination = self._card(parent, 0, "1. 导入位置", "▱", columns=3)
-        destination.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(destination, text="Eagle 导入位置", text_color=COLORS["text"], font=FONTS["label"]).grid(
-            row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w"
-        )
-        self.folder_path_entry = self._entry(destination, placeholder="例如：Instagram/quinn.xyz")
-        self.folder_path_entry.grid(row=1, column=1, padx=(0, SPACE["sm"]), pady=(0, SPACE["lg"]), sticky="ew")
-        self.folder_path_entry.bind("<KeyRelease>", self._sync_folder_path_changed)
-        self.browse_folder_button = self._button(
-            destination,
-            "选择 Eagle 文件夹",
-            self.choose_sync_eagle_folder,
-            kind="secondary",
-            width=136,
-        )
-        self.browse_folder_button.grid(row=1, column=2, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]))
-
-        actions = self._card(parent, 1, "2. 开始同步", "▷", columns=7)
-        for column in range(7):
-            actions.grid_columnconfigure(column, weight=1)
-
-        self.sync_button = self._button(actions, "开始同步", self.start_sync, kind="primary", width=140)
-        self.sync_button.grid(row=1, column=0, padx=(SPACE["lg"], SPACE["sm"]), pady=(0, SPACE["lg"]), sticky="ew")
-        self.stop_button = self._button(actions, "停止", self.stop_sync, width=88)
-        self.stop_button.grid(row=1, column=1, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
-        self.stop_button.configure(state="disabled")
-        self.preview_button = self._button(actions, "预览", self.preview, width=100)
-        self.preview_button.grid(row=1, column=2, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
-        self.folder_button = self._button(actions, "检查 Eagle 文件夹", self.ensure_folder, width=140)
-        self.folder_button.grid(row=1, column=3, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
-        self.open_staging_button = self._button(actions, "打开缓存目录", self.open_staging_dir, width=128)
-        self.open_staging_button.grid(row=1, column=4, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
-        self.open_config_button = self._button(actions, "打开配置目录", self.open_config_dir, width=128)
-        self.open_config_button.grid(row=1, column=5, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
-        self.open_readme_button = self._button(actions, "打开说明", self.open_readme, width=110)
-        self.open_readme_button.grid(row=1, column=6, padx=(SPACE["sm"], SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="ew")
 
     def _build_settings_tab(self, parent: Any) -> None:
         if getattr(self, "_settings_tab_built", False):
