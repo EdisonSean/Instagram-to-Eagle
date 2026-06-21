@@ -313,8 +313,8 @@ def test_ui_font_hierarchy_uses_bundled_pingfang_font_without_changing_log_font(
     assert FONTS["mono"] == ("Consolas", 13, "normal")
     assert BUTTON_HEIGHT == 38
     assert INPUT_HEIGHT == 38
-    assert NAV_TAB_FONT == (".PingFang-SC-Regular", 42, "bold")
-    assert NAV_TAB_FONT[1] == 3 * 14
+    assert NAV_TAB_FONT == (".PingFang-SC-Regular", 21, "bold")
+    assert NAV_TAB_FONT[1] == 42 // 2
     assert NAV_TAB_HEIGHT == 72
     assert NAV_TAB_WIDTH == 360
     assert HEADER_HEIGHT == 92
