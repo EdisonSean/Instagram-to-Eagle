@@ -301,18 +301,18 @@ def test_gui_module_exposes_main() -> None:
 
 
 def test_ui_font_hierarchy_uses_larger_harmony_fonts_without_changing_log_font() -> None:
-    assert FONTS["page_title"] == ("HarmonyOS Sans SC", 24, "bold")
-    assert FONTS["section"] == ("HarmonyOS Sans SC", 20, "bold")
-    assert FONTS["label"] == ("HarmonyOS Sans SC", 16, "bold")
-    assert FONTS["body"] == ("HarmonyOS Sans SC", 15, "normal")
-    assert FONTS["small"] == ("HarmonyOS Sans SC", 14, "normal")
-    assert FONTS["button"] == ("HarmonyOS Sans SC", 15, "normal")
+    assert FONTS["page_title"] == ("PingFang SC", 24, "bold")
+    assert FONTS["section"] == ("PingFang SC", 20, "bold")
+    assert FONTS["label"] == ("PingFang SC", 16, "bold")
+    assert FONTS["body"] == ("PingFang SC", 15, "normal")
+    assert FONTS["small"] == ("PingFang SC", 14, "normal")
+    assert FONTS["button"] == ("PingFang SC", 15, "normal")
     assert FONTS["section"][1] > FONTS["label"][1] > FONTS["body"][1] > FONTS["small"][1]
     assert FONTS["label"][2] == "bold"
     assert FONTS["mono"] == ("Consolas", 13, "normal")
     assert BUTTON_HEIGHT == 38
     assert INPUT_HEIGHT == 38
-    assert NAV_TAB_FONT == ("HarmonyOS Sans SC", 42, "bold")
+    assert NAV_TAB_FONT == ("PingFang SC", 42, "bold")
     assert NAV_TAB_FONT[1] == 3 * 14
     assert NAV_TAB_HEIGHT == 72
     assert NAV_TAB_WIDTH == 360

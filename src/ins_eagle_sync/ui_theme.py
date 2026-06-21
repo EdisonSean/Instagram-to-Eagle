@@ -1,5 +1,5 @@
 APP_TITLE = "Instagram to Eagle"
-FONT_FAMILY = "HarmonyOS Sans SC"
+FONT_FAMILY = "PingFang SC"
 
 COLORS = {
     "window": "#18191B",
