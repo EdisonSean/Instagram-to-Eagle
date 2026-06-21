@@ -287,11 +287,10 @@ class InsEagleSyncApp(_BaseWindow):
         self.main_panel.grid_columnconfigure(0, weight=1)
         self.main_panel.grid_rowconfigure(0, weight=1)
 
-        self.sync_tab = ctk.CTkScrollableFrame(
+        self.sync_tab = ctk.CTkFrame(
             self.main_panel,
             fg_color=COLORS["surface"],
             corner_radius=RADIUS["card"],
-            **SCROLLBAR_STYLE,
         )
         self.settings_tab = ctk.CTkFrame(
             self.main_panel,
@@ -304,7 +303,6 @@ class InsEagleSyncApp(_BaseWindow):
 
         self._build_sync_tab(self.sync_tab)
         self._build_settings_tab(self.settings_tab)
-        self._bind_scrollable_frame_mousewheel(self.sync_tab)
         self._show_main_tab(SYNC_TAB_NAME)
         self._build_log_panel()
         self._build_status_bar()
