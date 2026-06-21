@@ -51,7 +51,11 @@ from .ui_theme import (
     COMBOBOX_STYLE,
     ENTRY_STYLE,
     FONTS,
+    HEADER_HEIGHT,
     INPUT_HEIGHT,
+    NAV_TAB_FONT,
+    NAV_TAB_HEIGHT,
+    NAV_TAB_WIDTH,
     RADIUS,
     SCROLLBAR_STYLE,
     SEGMENTED_STYLE,
@@ -393,7 +397,7 @@ class InsEagleSyncApp(_BaseWindow):
             self,
             fg_color=COLORS["window"],
             corner_radius=0,
-            height=52,
+            height=HEADER_HEIGHT,
             border_width=1,
             border_color=COLORS["border_soft"],
         )
@@ -406,10 +410,10 @@ class InsEagleSyncApp(_BaseWindow):
             header,
             values=[SYNC_TAB_NAME, SETTINGS_TAB_NAME],
             command=self._show_main_tab,
-            width=280,
-            height=36,
+            width=NAV_TAB_WIDTH,
+            height=NAV_TAB_HEIGHT,
             corner_radius=RADIUS["pill"],
-            **{**SEGMENTED_STYLE, "font": (FONTS["button"][0], 14, "bold")},
+            **{**SEGMENTED_STYLE, "font": NAV_TAB_FONT},
         )
         self.nav_tabs.grid(row=0, column=1, pady=10)
         self.nav_tabs.set(SYNC_TAB_NAME)

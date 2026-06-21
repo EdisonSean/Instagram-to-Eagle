@@ -5,7 +5,17 @@ from unittest.mock import patch
 
 from ins_eagle_sync import gui
 from ins_eagle_sync.config import load_config
-from ins_eagle_sync.ui_theme import APP_TITLE, BUTTON_HEIGHT, COLORS, FONTS, INPUT_HEIGHT
+from ins_eagle_sync.ui_theme import (
+    APP_TITLE,
+    BUTTON_HEIGHT,
+    COLORS,
+    FONTS,
+    HEADER_HEIGHT,
+    INPUT_HEIGHT,
+    NAV_TAB_FONT,
+    NAV_TAB_HEIGHT,
+    NAV_TAB_WIDTH,
+)
 
 
 class FakeEntry:
@@ -302,6 +312,11 @@ def test_ui_font_hierarchy_uses_larger_harmony_fonts_without_changing_log_font()
     assert FONTS["mono"] == ("Consolas", 13, "normal")
     assert BUTTON_HEIGHT == 38
     assert INPUT_HEIGHT == 38
+    assert NAV_TAB_FONT == ("HarmonyOS Sans SC", 42, "bold")
+    assert NAV_TAB_FONT[1] == 3 * 14
+    assert NAV_TAB_HEIGHT == 72
+    assert NAV_TAB_WIDTH == 360
+    assert HEADER_HEIGHT == 92
 
 
 def test_resolve_config_path_falls_back_to_example(monkeypatch, project_tmp_path) -> None:
