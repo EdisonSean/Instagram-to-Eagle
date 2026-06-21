@@ -606,7 +606,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._sync_tab_built = True
         parent.grid_columnconfigure(0, weight=1)
 
-        source = self._card(parent, 0, "1. 来源", "⌁", columns=4)
+        source = self._card(parent, 2, "3. 来源", "⌁", columns=4)
         source.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(source, text="Instagram 链接", text_color=COLORS["text"], font=FONTS["label"]).grid(
             row=1, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
@@ -726,7 +726,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._set_entry(self.date_range_amount_entry, "1")
         self.date_range_choice.set(DATE_RANGE_DAY)
 
-        destination = self._card(parent, 1, "2. 导入位置", "▱", columns=3)
+        destination = self._card(parent, 0, "1. 导入位置", "▱", columns=3)
         destination.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(destination, text="Eagle 导入位置", text_color=COLORS["text"], font=FONTS["label"]).grid(
             row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w"
@@ -743,7 +743,7 @@ class InsEagleSyncApp(_BaseWindow):
         )
         self.browse_folder_button.grid(row=1, column=2, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]))
 
-        actions = self._card(parent, 2, "3. 开始同步", "▷", columns=7)
+        actions = self._card(parent, 1, "2. 开始同步", "▷", columns=7)
         for column in range(7):
             actions.grid_columnconfigure(column, weight=1)
 
