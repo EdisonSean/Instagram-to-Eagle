@@ -39,14 +39,14 @@ COLORS = {
 }
 
 FONTS = {
-    "title": (FONT_FAMILY, 24, "bold"),
-    "page_title": (FONT_FAMILY, 24, "bold"),
-    "section": (FONT_FAMILY, 20, "bold"),
-    "label": (FONT_FAMILY, 16, "bold"),
-    "body": (FONT_FAMILY, 15, "normal"),
-    "small": (FONT_FAMILY, 14, "normal"),
-    "button": (FONT_FAMILY, 15, "normal"),
-    "mono": ("Consolas", 13, "normal"),
+    "title": (FONT_FAMILY, 16, "bold"),
+    "page_title": (FONT_FAMILY, 16, "bold"),
+    "section": (FONT_FAMILY, 13, "bold"),
+    "label": (FONT_FAMILY, 11, "bold"),
+    "body": (FONT_FAMILY, 10, "normal"),
+    "small": (FONT_FAMILY, 9, "normal"),
+    "button": (FONT_FAMILY, 10, "normal"),
+    "mono": ("Consolas", 9, "normal"),
 }
 
 SPACE = {
@@ -65,7 +65,7 @@ RADIUS = {
 
 BUTTON_HEIGHT = 38
 INPUT_HEIGHT = 38
-NAV_TAB_FONT = (FONT_FAMILY, 21, "bold")
+NAV_TAB_FONT = (FONT_FAMILY, 14, "bold")
 NAV_TAB_HEIGHT = 72
 NAV_TAB_WIDTH = 360
 HEADER_HEIGHT = 92

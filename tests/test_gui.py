@@ -303,19 +303,19 @@ def test_gui_module_exposes_main() -> None:
 
 
 def test_ui_font_hierarchy_uses_bundled_pingfang_font_without_changing_log_font() -> None:
-    assert FONTS["page_title"] == (".PingFang-SC-Regular", 24, "bold")
-    assert FONTS["section"] == (".PingFang-SC-Regular", 20, "bold")
-    assert FONTS["label"] == (".PingFang-SC-Regular", 16, "bold")
-    assert FONTS["body"] == (".PingFang-SC-Regular", 15, "normal")
-    assert FONTS["small"] == (".PingFang-SC-Regular", 14, "normal")
-    assert FONTS["button"] == (".PingFang-SC-Regular", 15, "normal")
+    assert FONTS["page_title"] == (".PingFang-SC-Regular", 16, "bold")
+    assert FONTS["section"] == (".PingFang-SC-Regular", 13, "bold")
+    assert FONTS["label"] == (".PingFang-SC-Regular", 11, "bold")
+    assert FONTS["body"] == (".PingFang-SC-Regular", 10, "normal")
+    assert FONTS["small"] == (".PingFang-SC-Regular", 9, "normal")
+    assert FONTS["button"] == (".PingFang-SC-Regular", 10, "normal")
     assert FONTS["section"][1] > FONTS["label"][1] > FONTS["body"][1] > FONTS["small"][1]
     assert FONTS["label"][2] == "bold"
-    assert FONTS["mono"] == ("Consolas", 13, "normal")
+    assert FONTS["mono"] == ("Consolas", 9, "normal")
     assert BUTTON_HEIGHT == 38
     assert INPUT_HEIGHT == 38
-    assert NAV_TAB_FONT == (".PingFang-SC-Regular", 21, "bold")
-    assert NAV_TAB_FONT[1] == 42 // 2
+    assert NAV_TAB_FONT == (".PingFang-SC-Regular", 14, "bold")
+    assert NAV_TAB_FONT[1] == 21 * 2 // 3
     assert NAV_TAB_HEIGHT == 72
     assert NAV_TAB_WIDTH == 360
     assert HEADER_HEIGHT == 92
@@ -474,6 +474,23 @@ def test_english_display_values_map_back_to_chinese_internal_values() -> None:
     assert gui.InsEagleSyncApp._tr(app, gui.SYNC_TAB_NAME) == "Sync"
     assert gui.InsEagleSyncApp._to_zh(app, "Sync") == gui.SYNC_TAB_NAME
     assert gui.InsEagleSyncApp._to_zh(app, "Author Profile") == gui.MODE_AUTHOR
+
+
+def test_english_log_messages_are_localized_for_gui_display() -> None:
+    assert gui.localize_log_message("启动检查：", gui.LANGUAGE_EN) == "Startup checks:"
+    assert gui.localize_log_message("== 同步开始 ==", gui.LANGUAGE_EN) == "== Sync started =="
+    assert gui.localize_log_message("== 预览结束：成功 ==", gui.LANGUAGE_EN) == "== Preview finished: success =="
+    assert (
+        gui.localize_log_message("已选择 Eagle 文件夹：Instagram/quinn.xyz", gui.LANGUAGE_EN)
+        == "Selected Eagle folder: Instagram/quinn.xyz"
+    )
+    assert (
+        gui.localize_log_message("作者主页模式：最多抓取 12 条", gui.LANGUAGE_EN)
+        == "Author Profile mode: capture up to 12 posts"
+    )
+    assert gui.localize_log_message("当前运行环境：开发环境", gui.LANGUAGE_EN) == "Current runtime: development environment"
+    assert gui.localize_log_message("当前代理模式：自动检测", gui.LANGUAGE_EN) == "Current proxy mode: auto-detect"
+    assert gui.localize_log_message("启动检查：", gui.LANGUAGE_ZH) == "启动检查："
 
 
 def test_sync_mode_hides_author_slot_in_post_mode() -> None:

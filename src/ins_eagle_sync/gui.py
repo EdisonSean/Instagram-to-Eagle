@@ -245,6 +245,60 @@ EN_TEXT: dict[str, str] = {
 }
 ZH_TEXT = {value: key for key, value in EN_TEXT.items()}
 
+LOG_EN_TEXT: dict[str, str] = {
+    FRIENDLY_LOGIN_FAILURE_HINT: (
+        "Browser login-state reading failed. Possible causes include browser cookie encryption, "
+        "the wrong profile, or the browser still running. Close the browser and try again; "
+        "if it still fails, use a cookies.txt file instead."
+    ),
+    "启动检查：": "Startup checks:",
+    "登录测试完成：gallery-dl 可以使用当前登录配置。": "Login test complete: gallery-dl can use the current login configuration.",
+    "正常：Eagle 本地 API 可以连接。": "OK: Eagle Local API is reachable.",
+    "警告：Eagle 本地 API 地址为空。": "Warning: Eagle Local API URL is empty.",
+    "提示：当前使用不登录模式，仅能下载公开内容。": "Note: No-login mode is enabled; only public content can be downloaded.",
+    "提示：将自动从浏览器读取 Instagram 登录状态，读取前请关闭对应浏览器。": "Note: Instagram login will be read from the browser; close that browser first.",
+    "警告：Instagram 登录 Cookie 文件未设置，部分内容可能需要登录。": "Warning: Instagram cookie file is not set. Some content may require login.",
+    "正常：Instagram 登录 Cookie 文件已找到：<hidden>": "OK: Instagram cookie file was found: <hidden>",
+    "警告：Instagram 登录 Cookie 文件不存在：<hidden>": "Warning: Instagram cookie file does not exist: <hidden>",
+    "未检测到系统代理。你可以切换到“手动设置代理”，或选择“不使用代理”。": "No system proxy was detected. Switch to Manual proxy, or choose No proxy.",
+    "代理设置已清空。": "Proxy settings cleared.",
+    "设置已保存到 config.json。": "Settings saved to config.json.",
+    "日志已复制到剪贴板。": "Log copied to clipboard.",
+    "提示：当前没有正在运行的任务。": "Note: No task is currently running.",
+    "已请求停止。正在等待当前 gallery-dl 进程退出。": "Stop requested. Waiting for the current gallery-dl process to exit.",
+    "无法连接 Eagle。请先打开 Eagle，并确认本地 API 地址正确。": "Cannot connect to Eagle. Open Eagle and confirm the Local API URL is correct.",
+    "错误：Eagle 导入位置不能为空。": "Error: Eagle import location cannot be empty.",
+    "错误：Eagle 本地 API 地址不能为空。": "Error: Eagle Local API URL cannot be empty.",
+    "错误：Instagram 链接不能为空。": "Error: Instagram URL cannot be empty.",
+    "错误：作者主页模式只能填写一个作者主页链接。": "Error: Author Profile mode only accepts one profile URL.",
+    "错误：单帖模式至少需要一个帖子 / Reel / TV 链接。": "Error: Single Post mode requires at least one Post / Reel / TV URL.",
+    "错误：最多同步帖子数必须是数字。": "Error: Max posts must be a number.",
+    "错误：最多同步帖子数必须是 -1 或大于 0 的数字。": "Error: Max posts must be -1 or a number greater than 0.",
+    "错误：最近同步帖子数必须是数字。": "Error: Recent post count must be a number.",
+    "错误：最近同步帖子数必须大于 0。": "Error: Recent post count must be greater than 0.",
+    "错误：时间范围数量必须是数字。": "Error: Date range amount must be a number.",
+    "提示：当前已有任务正在运行。": "Note: A task is already running.",
+    "错误：任务运行时发生异常": "Error: An exception occurred while running the task.",
+    "已停止当前同步任务。": "Stopped the current sync task.",
+    "已请求停止，正在终止 gallery-dl。": "Stop requested; terminating gallery-dl.",
+    "gallery-dl 未及时退出，已强制结束。": "gallery-dl did not exit in time and was killed.",
+    "Instagram CDN 下载超时，gallery-dl 正在重试，可能与网络或代理有关。": "Instagram CDN download timed out; gallery-dl is retrying. This may be network or proxy related.",
+    "下载仍在进行。": "Download is still running.",
+    "可能卡住。": "Possibly stuck.",
+    "提示：未检测到系统代理，将直接连接网络。": "Note: No system proxy was detected; connecting directly.",
+    "提示：HTTPS 代理为空，已自动使用 HTTP 代理。": "Note: HTTPS proxy is empty; using the HTTP proxy automatically.",
+    "提示：手动代理未填写，将直接连接网络。": "Note: Manual proxy is empty; connecting directly.",
+    "提示：当前设置为不使用代理。": "Note: Proxy is disabled.",
+    "作者主页模式：不限制抓取数量": "Author Profile mode: unlimited post capture.",
+    "错误：默认最多同步帖子数必须是数字。": "Error: Default max author posts must be a number.",
+    "错误：默认最多同步帖子数必须是 -1 或大于 0 的数字。": "Error: Default max author posts must be -1 or a number greater than 0.",
+    "错误：请求间隔不能为空。": "Error: Request interval cannot be empty.",
+    "错误：默认 Eagle 导入位置不能为空。": "Error: Default Eagle import location cannot be empty.",
+    "提示：未选择存储下载文件的父级文件夹。": "Note: Storage parent folder was not selected.",
+    "存储目录已保存到 config.json。": "Storage folder saved to config.json.",
+    "没有找到浏览器 Cookies 数据库。请确认已在浏览器中登录 Instagram，或改用 cookies.txt 文件。": "No browser Cookies database was found. Confirm you are logged into Instagram in the browser, or use cookies.txt instead.",
+}
+
 DEFAULT_CONFIG_DATA: dict[str, Any] = {
     "language": LANGUAGE_ZH,
     "gallery_dl_executable": "py -m gallery_dl",
@@ -2469,7 +2523,8 @@ class InsEagleSyncApp(_BaseWindow):
             self.log_line_count = MAX_LOG_LINES
 
     def _sanitize_log_message(self, message: object) -> str:
-        return sanitize_log_message(message, config_data=self.config_data, config=self.config)
+        sanitized = sanitize_log_message(message, config_data=self.config_data, config=self.config)
+        return localize_log_message(sanitized, self.__dict__.get("language", LANGUAGE_ZH))
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
@@ -3338,6 +3393,116 @@ def sanitize_log_message(
         if secret:
             text = text.replace(secret, "<hidden>")
     return text
+
+
+def localize_log_message(message: object, language: str) -> str:
+    text = str(message)
+    if normalize_language(language) != LANGUAGE_EN:
+        return text
+    if text in LOG_EN_TEXT:
+        return LOG_EN_TEXT[text]
+    if text.startswith("== ") and text.endswith(" =="):
+        return _localize_task_marker(text)
+    translated = _localize_dynamic_log_message(text)
+    if translated is not None:
+        return translated
+    return text
+
+
+def _localize_task_marker(text: str) -> str:
+    inner = text[3:-3]
+    if inner.endswith("开始"):
+        label = inner.removesuffix("开始")
+        return f"== {_localize_task_label(label)} started =="
+    if "结束：" in inner:
+        label, status = inner.split("结束：", 1)
+        status_text = {
+            "成功": "success",
+            "失败": "failed",
+            "已停止": "cancelled",
+        }.get(status, status)
+        return f"== {_localize_task_label(label)} finished: {status_text} =="
+    return text
+
+
+def _localize_task_label(label: str) -> str:
+    return {
+        "同步": "Sync",
+        "预览": "Preview",
+        "测试 Instagram 登录状态": "Test Instagram Login",
+        "检查 Eagle 文件夹": "Check Eagle Folder",
+    }.get(label, EN_TEXT.get(label, label))
+
+
+def _localize_dynamic_log_message(text: str) -> str | None:
+    prefix_templates = (
+        ("正常：已检测到系统代理：", "OK: System proxy detected: {}"),
+        ("正常：已自动检测到系统代理 ", "OK: System proxy auto-detected: {}"),
+        ("正常：正在使用手动代理 ", "OK: Using manual proxy {}"),
+        ("警告：Eagle 本地 API 暂时无法连接：", "Warning: Eagle Local API is temporarily unreachable: {}"),
+        ("警告：登录测试未通过：", "Warning: Login test failed: {}"),
+        ("错误：无法生成登录测试命令：", "Error: Could not build login test command: {}"),
+        ("错误：登录测试失败：", "Error: Login test failed: {}"),
+        ("登录测试命令：", "Login test command: {}"),
+        ("设置已重新加载：", "Settings reloaded: {}"),
+        ("错误：保存语言设置失败：", "Warning: Failed to save language setting: {}"),
+        ("错误：保存设置失败：", "Error: Failed to save settings: {}"),
+        ("错误：重新加载设置失败：", "Error: Failed to reload settings: {}"),
+        ("错误：保存存储目录失败：", "Error: Failed to save storage folder: {}"),
+        ("已找到 ", "Found {}"),
+        ("已选择 Eagle 文件夹：", "Selected Eagle folder: {}"),
+        ("已选择默认 Eagle 文件夹：", "Selected default Eagle folder: {}"),
+        ("警告：无法记住上次选择的 Eagle 文件夹：", "Warning: Could not remember the last selected Eagle folder: {}"),
+        ("提示：缓存目录不存在：", "Note: Cache folder does not exist: {}"),
+        ("已打开缓存目录：", "Opened cache folder: {}"),
+        ("错误：无法打开缓存目录 ", "Error: Could not open cache folder {}"),
+        ("提示：README.md 不存在：", "Note: README.md does not exist: {}"),
+        ("已打开 配置目录：", "Opened config folder: {}"),
+        ("已打开 说明文档：", "Opened guide: {}"),
+        ("错误：无法打开 配置目录：", "Error: Could not open config folder: {}"),
+        ("错误：无法打开 说明文档：", "Error: Could not open guide: {}"),
+        ("错误：", "Error: {}"),
+        ("警告：", "Warning: {}"),
+        ("提示：", "Note: {}"),
+        ("正常：", "OK: {}"),
+        ("当前运行环境：", "Current runtime: {}"),
+        ("当前代理模式：", "Current proxy mode: {}"),
+        ("作者主页模式：最多抓取 ", "Author Profile mode: capture up to {}"),
+        ("作者主页模式：时间范围 ", "Author Profile mode: date range {}"),
+        ("单帖模式：共 ", "Single Post mode: {}"),
+        ("单帖模式：正在处理 ", "Single Post mode: processing {}"),
+        ("单帖模式：已按作者整理缓存目录：", "Single Post mode: organized cache folder by author: {}"),
+    )
+    for prefix, template in prefix_templates:
+        if text.startswith(prefix):
+            return template.format(_localize_log_fragment(text.removeprefix(prefix)))
+    return None
+
+
+def _localize_log_fragment(text: str) -> str:
+    replacements = {
+        " 个帖子链接，将按顺序同步。": " post URLs; syncing in order.",
+        " 条": " posts",
+        "不限": "unlimited",
+        " 到 ": " to ",
+        "已打包运行": "packaged app",
+        "开发环境": "development environment",
+        "自动检测": "auto-detect",
+        "手动设置": "manual",
+        "不使用代理": "no proxy",
+        "未找到 gallery-dl，无法下载。请确认发布包完整。": "gallery-dl was not found; cannot download. Confirm the release package is complete.",
+        "未找到 yt-dlp，部分视频可能使用备用下载方式。": "yt-dlp was not found; some videos may use the fallback downloader.",
+        "已找到内置 gallery-dl.exe": "Bundled gallery-dl.exe found",
+        "已内置 gallery-dl Python 模块": "Bundled gallery-dl Python module found",
+        "开发环境 gallery-dl Python 模块可用": "Development gallery-dl Python module is available",
+        "正常": "OK",
+        "失败": "failed",
+        "成功": "success",
+    }
+    result = text
+    for source, target in replacements.items():
+        result = result.replace(source, target)
+    return result
 
 
 def run_instagram_login_check(config: AppConfig, url: str = DEFAULT_LOGIN_TEST_URL) -> list[str]:
