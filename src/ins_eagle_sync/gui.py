@@ -61,6 +61,7 @@ from .ui_theme import (
     SEGMENTED_STYLE,
     SPACE,
     TEXTBOX_STYLE,
+    load_ui_font_resource,
 )
 from .utils import InstagramMode, detect_instagram_url, normalize_instagram_post_urls, split_instagram_url_text
 
@@ -224,6 +225,7 @@ class InsEagleSyncApp(_BaseWindow):
         self.geometry("1500x900")
         self.minsize(1440, 800)
         self.configure(fg_color=COLORS["window"])
+        self.font_status_message = load_ui_font_resource()
         self.icon_status_message: str | None = None
         self._set_window_icon()
 
@@ -1760,6 +1762,8 @@ class InsEagleSyncApp(_BaseWindow):
 
     def startup_checks(self) -> None:
         def run() -> None:
+            if self.font_status_message:
+                self._queue_log(self.font_status_message)
             if self.icon_status_message:
                 self._queue_log(self.icon_status_message)
             for message in run_startup_checks(self.config):

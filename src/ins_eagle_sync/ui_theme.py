@@ -1,5 +1,15 @@
+from __future__ import annotations
+
+import ctypes
+import sys
+from pathlib import Path
+
+from .runtime import get_resource_path
+
+
 APP_TITLE = "Instagram to Eagle"
-FONT_FAMILY = ".PingFang SC Regular"
+FONT_FAMILY = ".PingFang-SC-Regular"
+FONT_RESOURCE_RELATIVE_PATH = Path("assets") / "fonts" / "pingfang-sc-regular.ttf"
 
 COLORS = {
     "window": "#18191B",
@@ -138,3 +148,18 @@ SCROLLBAR_STYLE = {
     "scrollbar_button_color": COLORS["surface_3"],
     "scrollbar_button_hover_color": COLORS["selection_hover"],
 }
+
+
+def load_ui_font_resource() -> str | None:
+    font_path = get_resource_path(FONT_RESOURCE_RELATIVE_PATH)
+    if not font_path.exists():
+        return f"提示：未找到界面字体文件 {FONT_RESOURCE_RELATIVE_PATH}，系统可能会使用备用字体。"
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        added = ctypes.windll.gdi32.AddFontResourceExW(str(font_path), 0x10, 0)
+    except Exception as exc:  # noqa: BLE001 - font loading should never block GUI startup.
+        return f"提示：界面字体加载失败：{exc}"
+    if added == 0:
+        return f"提示：界面字体未能注册：{FONT_RESOURCE_RELATIVE_PATH}。系统可能会使用备用字体。"
+    return None

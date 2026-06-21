@@ -10,6 +10,7 @@ from ins_eagle_sync.ui_theme import (
     BUTTON_HEIGHT,
     COLORS,
     FONTS,
+    FONT_RESOURCE_RELATIVE_PATH,
     HEADER_HEIGHT,
     INPUT_HEIGHT,
     NAV_TAB_FONT,
@@ -300,23 +301,24 @@ def test_gui_module_exposes_main() -> None:
     assert gui.LOG_PANEL_TITLE == "运行日志"
 
 
-def test_ui_font_hierarchy_uses_larger_harmony_fonts_without_changing_log_font() -> None:
-    assert FONTS["page_title"] == (".PingFang SC Regular", 24, "bold")
-    assert FONTS["section"] == (".PingFang SC Regular", 20, "bold")
-    assert FONTS["label"] == (".PingFang SC Regular", 16, "bold")
-    assert FONTS["body"] == (".PingFang SC Regular", 15, "normal")
-    assert FONTS["small"] == (".PingFang SC Regular", 14, "normal")
-    assert FONTS["button"] == (".PingFang SC Regular", 15, "normal")
+def test_ui_font_hierarchy_uses_bundled_pingfang_font_without_changing_log_font() -> None:
+    assert FONTS["page_title"] == (".PingFang-SC-Regular", 24, "bold")
+    assert FONTS["section"] == (".PingFang-SC-Regular", 20, "bold")
+    assert FONTS["label"] == (".PingFang-SC-Regular", 16, "bold")
+    assert FONTS["body"] == (".PingFang-SC-Regular", 15, "normal")
+    assert FONTS["small"] == (".PingFang-SC-Regular", 14, "normal")
+    assert FONTS["button"] == (".PingFang-SC-Regular", 15, "normal")
     assert FONTS["section"][1] > FONTS["label"][1] > FONTS["body"][1] > FONTS["small"][1]
     assert FONTS["label"][2] == "bold"
     assert FONTS["mono"] == ("Consolas", 13, "normal")
     assert BUTTON_HEIGHT == 38
     assert INPUT_HEIGHT == 38
-    assert NAV_TAB_FONT == (".PingFang SC Regular", 42, "bold")
+    assert NAV_TAB_FONT == (".PingFang-SC-Regular", 42, "bold")
     assert NAV_TAB_FONT[1] == 3 * 14
     assert NAV_TAB_HEIGHT == 72
     assert NAV_TAB_WIDTH == 360
     assert HEADER_HEIGHT == 92
+    assert FONT_RESOURCE_RELATIVE_PATH.as_posix() == "assets/fonts/pingfang-sc-regular.ttf"
 
 
 def test_resolve_config_path_falls_back_to_example(monkeypatch, project_tmp_path) -> None:
