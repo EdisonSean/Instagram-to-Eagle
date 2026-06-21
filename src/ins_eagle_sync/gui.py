@@ -1594,9 +1594,11 @@ class InsEagleSyncApp(_BaseWindow):
     def _sync_mode_changed(self, value: str | None = None) -> None:
         mode = value or self.mode.get()
         if mode == MODE_AUTHOR:
+            self.author_options_slot.grid()
             self.author_options_panel.grid()
             self._author_range_changed()
         else:
+            self.author_options_slot.grid_remove()
             self.author_options_panel.grid_remove()
 
     def _author_range_changed(self, value: str | None = None) -> None:

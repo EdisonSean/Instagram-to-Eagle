@@ -426,7 +426,7 @@ def test_default_max_posts_is_unlimited() -> None:
     assert gui.default_config_data()["download"]["max_posts"] == -1
 
 
-def test_sync_mode_keeps_reserved_author_slot_while_toggling_panel() -> None:
+def test_sync_mode_hides_author_slot_in_post_mode() -> None:
     app = object.__new__(gui.InsEagleSyncApp)
     app.author_options_slot = FakeFrame()
     app.author_options_panel = FakeFrame()
@@ -436,7 +436,7 @@ def test_sync_mode_keeps_reserved_author_slot_while_toggling_panel() -> None:
     app.mode = SimpleNamespace(get=lambda: gui.MODE_POST)
 
     gui.InsEagleSyncApp._sync_mode_changed(app, gui.MODE_POST)
-    assert app.author_options_slot.visible is True
+    assert app.author_options_slot.visible is False
     assert app.author_options_panel.visible is False
 
     gui.InsEagleSyncApp._sync_mode_changed(app, gui.MODE_AUTHOR)
