@@ -107,7 +107,7 @@ ins-eagle-sync-gui
 
 GUI 的基本流程：
 
-1. 在“设置”页配置 staging 目录、缓存目录、Eagle API、cookies 和代理。
+1. 在“设置”页配置 staging 目录、缓存目录、Eagle API、cookies、代理，以及常用/高级同步选项。
 2. 在“同步”页选择“单个帖子”或“作者主页”。
 3. 粘贴 Instagram URL。
 4. 选择 Eagle 目标文件夹。

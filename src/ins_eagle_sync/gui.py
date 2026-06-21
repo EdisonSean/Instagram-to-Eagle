@@ -240,6 +240,11 @@ class InsEagleSyncApp(_BaseWindow):
         self.proxy_detect_result_var = ctk.StringVar(value="当前检测结果：未检测")
         self.date_range_var = ctk.StringVar(value=DATE_RANGE_DAY)
         self.author_sync_range_var = ctk.StringVar(value=AUTHOR_SYNC_UNLIMITED)
+        self.verify_var = ctk.BooleanVar(value=True)
+        self.ignore_archive_var = ctk.BooleanVar(value=False)
+        self.force_var = ctk.BooleanVar(value=False)
+        self.dry_run_var = ctk.BooleanVar(value=False)
+        self.show_annotation_var = ctk.BooleanVar(value=False)
         self.selected_folder_id: str | None = None
         self.selected_default_folder_id: str | None = None
         self.storage_preview_vars = {
@@ -528,7 +533,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._sync_tab_built = True
         parent.grid_columnconfigure(0, weight=1)
 
-        source = self._card(parent, 1, "1. 来源", "⌁", columns=4)
+        source = self._card(parent, 0, "1. 来源", "⌁", columns=4)
         source.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(source, text="Instagram 链接", text_color=COLORS["text"], font=FONTS["label"]).grid(
             row=1, column=0, columnspan=4, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
@@ -648,7 +653,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._set_entry(self.date_range_amount_entry, "1")
         self.date_range_choice.set(DATE_RANGE_DAY)
 
-        destination = self._card(parent, 2, "2. 导入位置", "▱", columns=3)
+        destination = self._card(parent, 1, "2. 导入位置", "▱", columns=3)
         destination.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(destination, text="Eagle 导入位置", text_color=COLORS["text"], font=FONTS["label"]).grid(
             row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w"
@@ -665,76 +670,25 @@ class InsEagleSyncApp(_BaseWindow):
         )
         self.browse_folder_button.grid(row=1, column=2, padx=(0, SPACE["lg"]), pady=(0, SPACE["lg"]))
 
-        self.verify_var = ctk.BooleanVar(value=True)
-        self.ignore_archive_var = ctk.BooleanVar(value=False)
-        self.force_var = ctk.BooleanVar(value=False)
-        self.dry_run_var = ctk.BooleanVar(value=False)
-        self.show_annotation_var = ctk.BooleanVar(value=False)
-
-        common = self._card(parent, 3, "3. 常用选项", "⚙", columns=2)
-        common.grid_columnconfigure(0, weight=1)
-        common.grid_columnconfigure(1, weight=1)
-        self._checkbox(common, "同步前检查 Eagle 中是否已存在", self.verify_var).grid(
-            row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
-        )
-        ctk.CTkLabel(common, text="避免重复导入，删除后可重新补导入。", text_color="gray").grid(
-            row=2, column=0, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
-        )
-        self._checkbox(common, "仅预览，不实际导入", self.dry_run_var).grid(
-            row=1, column=1, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
-        )
-        ctk.CTkLabel(common, text="只显示将要执行的内容。", text_color="gray").grid(
-            row=2, column=1, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
-        )
-
-        advanced = self._card(parent, 4, "4. 高级选项", "☷", columns=3)
-        for column in range(3):
-            advanced.grid_columnconfigure(column, weight=1)
-        self._checkbox(advanced, "忽略下载记录，重新下载", self.ignore_archive_var).grid(
-            row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
-        )
-        ctk.CTkLabel(advanced, text="即使以前下载过，也重新下载。", text_color="gray").grid(
-            row=2, column=0, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
-        )
-        self._checkbox(advanced, "强制重新导入", self.force_var).grid(
-            row=1, column=1, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
-        )
-        ctk.CTkLabel(advanced, text="忽略已导入记录，可能产生重复素材。", text_color="gray").grid(
-            row=2, column=1, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
-        )
-        self._checkbox(advanced, "显示详细注释", self.show_annotation_var).grid(
-            row=1, column=2, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
-        )
-        ctk.CTkLabel(advanced, text="在日志中显示将写入 Eagle 的完整注释。", text_color=COLORS["text_muted"], font=FONTS["small"]).grid(
-            row=2, column=2, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
-        )
-
-        actions = ctk.CTkFrame(
-            parent,
-            fg_color=COLORS["card"],
-            corner_radius=RADIUS["card"],
-            border_width=1,
-            border_color=COLORS["border"],
-        )
-        actions.grid(row=0, column=0, sticky="ew", padx=SPACE["md"], pady=(SPACE["md"], SPACE["sm"]))
+        actions = self._card(parent, 2, "3. 开始同步", "▷", columns=7)
         for column in range(7):
             actions.grid_columnconfigure(column, weight=1)
 
         self.sync_button = self._button(actions, "开始同步", self.start_sync, kind="primary", width=140)
-        self.sync_button.grid(row=0, column=0, padx=(SPACE["md"], SPACE["sm"]), pady=SPACE["md"], sticky="ew")
+        self.sync_button.grid(row=1, column=0, padx=(SPACE["lg"], SPACE["sm"]), pady=(0, SPACE["lg"]), sticky="ew")
         self.stop_button = self._button(actions, "停止", self.stop_sync, width=88)
-        self.stop_button.grid(row=0, column=1, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.stop_button.grid(row=1, column=1, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
         self.stop_button.configure(state="disabled")
         self.preview_button = self._button(actions, "预览", self.preview, width=100)
-        self.preview_button.grid(row=0, column=2, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.preview_button.grid(row=1, column=2, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
         self.folder_button = self._button(actions, "检查 Eagle 文件夹", self.ensure_folder, width=140)
-        self.folder_button.grid(row=0, column=3, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.folder_button.grid(row=1, column=3, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
         self.open_staging_button = self._button(actions, "打开缓存目录", self.open_staging_dir, width=128)
-        self.open_staging_button.grid(row=0, column=4, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.open_staging_button.grid(row=1, column=4, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
         self.open_config_button = self._button(actions, "打开配置目录", self.open_config_dir, width=128)
-        self.open_config_button.grid(row=0, column=5, padx=SPACE["sm"], pady=SPACE["md"], sticky="ew")
+        self.open_config_button.grid(row=1, column=5, padx=SPACE["sm"], pady=(0, SPACE["lg"]), sticky="ew")
         self.open_readme_button = self._button(actions, "打开说明", self.open_readme, width=110)
-        self.open_readme_button.grid(row=0, column=6, padx=(SPACE["sm"], SPACE["md"]), pady=SPACE["md"], sticky="ew")
+        self.open_readme_button.grid(row=1, column=6, padx=(SPACE["sm"], SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="ew")
 
     def _build_settings_tab(self, parent: Any) -> None:
         if getattr(self, "_settings_tab_built", False):
@@ -904,6 +858,47 @@ class InsEagleSyncApp(_BaseWindow):
         self.reload_settings_button.grid(row=0, column=1, padx=SPACE["sm"], pady=0, sticky="e")
         self.save_settings_button = self._button(actions, "保存设置", self.save_settings, kind="primary", width=132)
         self.save_settings_button.grid(row=0, column=2, padx=(SPACE["sm"], 0), pady=0, sticky="e")
+
+        common = self._card(parent, 5, "4. 常用选项", "⚙", columns=2)
+        common.grid_columnconfigure(0, weight=1)
+        common.grid_columnconfigure(1, weight=1)
+        self._checkbox(common, "同步前检查 Eagle 中是否已存在", self.verify_var).grid(
+            row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
+        )
+        ctk.CTkLabel(common, text="避免重复导入，删除后可重新补导入。", text_color="gray").grid(
+            row=2, column=0, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
+        )
+        self._checkbox(common, "仅预览，不实际导入", self.dry_run_var).grid(
+            row=1, column=1, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
+        )
+        ctk.CTkLabel(common, text="只显示将要执行的内容。", text_color="gray").grid(
+            row=2, column=1, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
+        )
+
+        advanced = self._card(parent, 6, "5. 高级选项", "☷", columns=3)
+        for column in range(3):
+            advanced.grid_columnconfigure(column, weight=1)
+        self._checkbox(advanced, "忽略下载记录，重新下载", self.ignore_archive_var).grid(
+            row=1, column=0, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
+        )
+        ctk.CTkLabel(advanced, text="即使以前下载过，也重新下载。", text_color="gray").grid(
+            row=2, column=0, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
+        )
+        self._checkbox(advanced, "强制重新导入", self.force_var).grid(
+            row=1, column=1, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
+        )
+        ctk.CTkLabel(advanced, text="忽略已导入记录，可能产生重复素材。", text_color="gray").grid(
+            row=2, column=1, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w"
+        )
+        self._checkbox(advanced, "显示详细注释", self.show_annotation_var).grid(
+            row=1, column=2, padx=SPACE["lg"], pady=(0, SPACE["xs"]), sticky="w"
+        )
+        ctk.CTkLabel(
+            advanced,
+            text="在日志中显示将写入 Eagle 的完整注释。",
+            text_color=COLORS["text_muted"],
+            font=FONTS["small"],
+        ).grid(row=2, column=2, padx=(44, SPACE["lg"]), pady=(0, SPACE["lg"]), sticky="w")
         self._bind_scrollable_frame_mousewheel(content)
 
     def _scroll_settings_to_section(self, section_key: str) -> None:
