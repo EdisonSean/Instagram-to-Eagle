@@ -91,24 +91,12 @@ def sync_post(
         logger("sync-post requires a post or reel URL.")
         return _service_result(False, messages=messages)
 
-    try:
-        request = build_gallery_dl_request(
-            config,
-            info.normalized_url,
-            ignore_archive=ignore_archive,
-            verbose=verbose_gallery_dl,
-        )
-    except ValueError as exc:
-        logger(f"error: {exc}")
-        return _service_result(
-            False,
-            messages=messages,
-            total=0,
-            skipped=0,
-            imported=0,
-            failed=1,
-            failures=[{"url": info.normalized_url, "error": str(exc)}],
-        )
+    request = build_gallery_dl_request(
+        config,
+        info.normalized_url,
+        ignore_archive=ignore_archive,
+        verbose=verbose_gallery_dl,
+    )
     download_result = run_gallery_dl(
         config,
         info.normalized_url,

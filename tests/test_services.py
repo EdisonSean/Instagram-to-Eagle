@@ -11,22 +11,24 @@ from ins_eagle_sync.config import load_config
 from ins_eagle_sync import services
 
 
-def write_test_config(path, project_tmp_path, *, title_caption_chars=70, login=None):
-    data = {
-        "gallery_dl_executable": "py -m gallery_dl",
-        "staging_dir": str(project_tmp_path / "staging"),
-        "archive_db": str(project_tmp_path / "archive.sqlite3"),
-        "imported_state": str(project_tmp_path / "imported.json"),
-        "eagle_api_base": "http://localhost:41595",
-        "default_eagle_root_folder": "Instagram",
-        "title_caption_chars": title_caption_chars,
-        "proxy": {"enabled": False},
-        "cookies": {"enabled": False},
-        "download": {"sleep_request": "8-15", "max_posts": 50},
-    }
-    if login is not None:
-        data["login"] = login
-    path.write_text(json.dumps(data), encoding="utf-8")
+def write_test_config(path, project_tmp_path, *, title_caption_chars=70):
+    path.write_text(
+        json.dumps(
+            {
+                "gallery_dl_executable": "py -m gallery_dl",
+                "staging_dir": str(project_tmp_path / "staging"),
+                "archive_db": str(project_tmp_path / "archive.sqlite3"),
+                "imported_state": str(project_tmp_path / "imported.json"),
+                "eagle_api_base": "http://localhost:41595",
+                "default_eagle_root_folder": "Instagram",
+                "title_caption_chars": title_caption_chars,
+                "proxy": {"enabled": False},
+                "cookies": {"enabled": False},
+                "download": {"sleep_request": "8-15", "max_posts": 50},
+            }
+        ),
+        encoding="utf-8",
+    )
     return load_config(path)
 
 
@@ -113,21 +115,6 @@ def test_sync_post_service_downloads_then_imports(project_tmp_path):
     request_mock.assert_called_once()
     assert request_mock.call_args.kwargs["ignore_archive"] is True
     assert run_mock.call_args.kwargs["dry_run"] is True
-
-
-def test_sync_post_service_returns_login_config_error(project_tmp_path):
-    config = write_test_config(
-        project_tmp_path / "config.json",
-        project_tmp_path,
-        login={"method": "password", "username": "", "password": ""},
-    )
-
-    result = services.sync_post(config, "https://www.instagram.com/p/ABC123/", folder_id="folder-1")
-
-    assert result["ok"] is False
-    assert result["failed"] == 1
-    assert result["failures"][0]["url"] == "https://www.instagram.com/p/ABC123/"
-    assert "账号密码登录需要填写" in "\n".join(result["messages"])
 
 
 def test_sync_post_service_moves_downloaded_post_under_author_directory(project_tmp_path):

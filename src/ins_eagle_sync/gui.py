@@ -23,10 +23,6 @@ from . import services
 from .config import (
     FROZEN_GALLERY_DL_MODULE_ARG,
     GALLERY_DL_EXE_NAME,
-    LOGIN_METHOD_BROWSER,
-    LOGIN_METHOD_COOKIE_FILE,
-    LOGIN_METHOD_NONE,
-    LOGIN_METHOD_PASSWORD,
     YT_DLP_EXE_NAME,
     AppConfig,
     load_config,
@@ -36,13 +32,7 @@ from .config import (
     split_command,
 )
 from .eagle_client import EagleClient
-from .gallerydl_runner import (
-    active_login_method,
-    build_auth_args,
-    build_subprocess_env,
-    format_command_for_log,
-    is_browser_cookie_error,
-)
+from .gallerydl_runner import build_cookie_args, build_subprocess_env, format_command_for_log, is_browser_cookie_error
 from .proxy_utils import detect_system_proxy, normalize_proxy_url, proxy_mode_label
 from .runtime import (
     APP_ICON_RELATIVE_PATH,
@@ -84,18 +74,9 @@ CACHE_DIR_NAME = "_cache"
 ARCHIVE_DB_NAME = "gallery-dl-archive.sqlite3"
 IMPORTED_STATE_NAME = "eagle-imported.json"
 DEFAULT_LOGIN_TEST_URL = "https://www.instagram.com/instagram/"
-LOGIN_ACCOUNT_PASSWORD = "账号密码登录（默认）"
-LOGIN_COOKIE_FILE = "使用 cookies.txt 文件（备用）"
+LOGIN_COOKIE_FILE = "使用 cookies.txt 文件（推荐，稳定）"
 LOGIN_BROWSER = "自动从浏览器读取登录状态（实验性）"
 LOGIN_NONE = "不登录，仅下载公开内容"
-LOGIN_METHOD_VALUES = (LOGIN_ACCOUNT_PASSWORD, LOGIN_COOKIE_FILE, LOGIN_BROWSER, LOGIN_NONE)
-LOGIN_LABEL_TO_METHOD = {
-    LOGIN_ACCOUNT_PASSWORD: LOGIN_METHOD_PASSWORD,
-    LOGIN_COOKIE_FILE: LOGIN_METHOD_COOKIE_FILE,
-    LOGIN_BROWSER: LOGIN_METHOD_BROWSER,
-    LOGIN_NONE: LOGIN_METHOD_NONE,
-}
-LOGIN_METHOD_TO_LABEL = {value: label for label, value in LOGIN_LABEL_TO_METHOD.items()}
 PROXY_AUTO = "自动检测系统代理（推荐）"
 PROXY_MANUAL = "手动设置代理"
 PROXY_NONE = "不使用代理"
@@ -115,8 +96,8 @@ BROWSER_LABELS = ("Chrome", "Edge", "Firefox")
 BROWSER_VALUES = {"Chrome": "chrome", "Edge": "edge", "Firefox": "firefox"}
 COOKIE_HELP_URL = "https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc"
 FRIENDLY_LOGIN_FAILURE_HINT = (
-    "Instagram 登录测试未通过。请优先确认账号、密码和代理；如果账号启用了两步验证或被 Instagram 风控拦截，"
-    "可以改用 cookies.txt 方式。"
+    "浏览器登录状态读取失败。可能原因是浏览器 Cookie 加密、Profile 选择错误，"
+    "或浏览器仍在运行。请尝试关闭浏览器后重试；如果仍失败，建议改用 cookies.txt 文件方式。"
 )
 STATUS_READY = "就绪"
 STATUS_RUNNING = "运行中"
@@ -166,11 +147,6 @@ DEFAULT_CONFIG_DATA: dict[str, Any] = {
         "http_proxy": "",
         "https_proxy": "",
         "detected_proxy": "",
-    },
-    "login": {
-        "method": LOGIN_METHOD_PASSWORD,
-        "username": "",
-        "password": "",
     },
     "cookies": {
         "enabled": False,
@@ -801,7 +777,7 @@ class InsEagleSyncApp(_BaseWindow):
         login_card.grid_columnconfigure(2, weight=1)
         self.login_method = ctk.CTkSegmentedButton(
             login_card,
-            values=list(LOGIN_METHOD_VALUES),
+            values=[LOGIN_COOKIE_FILE, LOGIN_BROWSER, LOGIN_NONE],
             command=self._login_method_changed,
             height=30,
             **SEGMENTED_STYLE,
@@ -810,56 +786,12 @@ class InsEagleSyncApp(_BaseWindow):
         ctk.CTkLabel(
             login_card,
             text=(
-                "默认使用 Instagram 账号密码登录；如果账号触发两步验证或风控，可改用 cookies.txt。"
-                "浏览器读取容易受 Cookie 加密、Profile 或浏览器锁定影响。"
+                "cookies.txt 文件方式推荐且稳定；浏览器读取可能因 Cookie 加密、Profile 不匹配"
+                "或浏览器未关闭而失败；不登录模式只适合部分公开内容。"
             ),
             text_color=COLORS["text_muted"],
             font=FONTS["small"],
         ).grid(row=2, column=0, columnspan=3, padx=SPACE["lg"], pady=(0, SPACE["md"]), sticky="w")
-
-        self.account_login_frame = ctk.CTkFrame(
-            login_card,
-            corner_radius=RADIUS["control"],
-            fg_color=COLORS["surface_3"],
-            border_width=1,
-            border_color=COLORS["border_soft"],
-        )
-        self.account_login_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(0, SPACE["md"]))
-        self.account_login_frame.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(
-            self.account_login_frame,
-            text="Instagram 账号",
-            text_color=COLORS["text"],
-            font=FONTS["label"],
-        ).grid(row=0, column=0, padx=(SPACE["md"], SPACE["sm"]), pady=SPACE["md"], sticky="w")
-        self.setting_entries["instagram_username"] = self._entry(self.account_login_frame)
-        self.setting_entries["instagram_username"].grid(row=0, column=1, columnspan=2, pady=SPACE["md"], padx=(0, SPACE["md"]), sticky="ew")
-        ctk.CTkLabel(
-            self.account_login_frame,
-            text="Instagram 密码",
-            text_color=COLORS["text"],
-            font=FONTS["label"],
-        ).grid(row=1, column=0, padx=(SPACE["md"], SPACE["sm"]), pady=(0, SPACE["md"]), sticky="w")
-        self.setting_entries["instagram_password"] = ctk.CTkEntry(
-            self.account_login_frame,
-            show="*",
-            height=INPUT_HEIGHT,
-            **ENTRY_STYLE,
-        )
-        self.setting_entries["instagram_password"].grid(
-            row=1,
-            column=1,
-            columnspan=2,
-            padx=(0, SPACE["md"]),
-            pady=(0, SPACE["md"]),
-            sticky="ew",
-        )
-        ctk.CTkLabel(
-            self.account_login_frame,
-            text="账号密码会保存在本地 config.json 中，请勿分享配置文件或日志截图。若登录测试失败，可能需要先在浏览器处理验证。",
-            text_color=COLORS["text_muted"],
-            font=FONTS["small"],
-        ).grid(row=2, column=0, columnspan=3, padx=SPACE["md"], pady=(0, SPACE["md"]), sticky="w")
 
         self.browser_login_frame = ctk.CTkFrame(
             login_card,
@@ -868,7 +800,7 @@ class InsEagleSyncApp(_BaseWindow):
             border_width=1,
             border_color=COLORS["border_soft"],
         )
-        self.browser_login_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(0, SPACE["md"]))
+        self.browser_login_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(0, SPACE["md"]))
         self.browser_login_frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(self.browser_login_frame, text="浏览器选择", text_color=COLORS["text"], font=FONTS["label"]).grid(
             row=0, column=0, padx=(SPACE["md"], SPACE["sm"]), pady=SPACE["md"], sticky="w"
@@ -907,7 +839,7 @@ class InsEagleSyncApp(_BaseWindow):
             border_width=1,
             border_color=COLORS["border_soft"],
         )
-        self.cookie_file_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(0, SPACE["md"]))
+        self.cookie_file_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=SPACE["lg"], pady=(0, SPACE["md"]))
         self.cookie_file_frame.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(
             self.cookie_file_frame,
@@ -931,7 +863,7 @@ class InsEagleSyncApp(_BaseWindow):
         ).grid(row=1, column=1, columnspan=2, padx=SPACE["md"], pady=(0, SPACE["md"]), sticky="w")
 
         self.test_login_button = self._button(login_card, "测试 Instagram 登录状态", self.test_instagram_login, width=180)
-        self.test_login_button.grid(row=6, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w")
+        self.test_login_button.grid(row=5, column=0, padx=SPACE["lg"], pady=(0, SPACE["lg"]), sticky="w")
 
         storage_card = self._card(parent, 3, "2. 下载与缓存路径", "▱", columns=3)
         self.settings_section_widgets["storage"] = storage_card
@@ -1386,8 +1318,6 @@ class InsEagleSyncApp(_BaseWindow):
 
     def _populate_settings_form(self) -> None:
         values = {
-            "instagram_username": get_config_value(self.config_data, "instagram_username"),
-            "instagram_password": get_config_value(self.config_data, "instagram_password"),
             "cookies_file": get_config_value(self.config_data, "cookies_file"),
             STORAGE_PARENT_KEY: get_config_value(self.config_data, STORAGE_PARENT_KEY),
             "eagle_api_base": get_config_value(self.config_data, "eagle_api_base"),
@@ -1520,18 +1450,11 @@ class InsEagleSyncApp(_BaseWindow):
         data = apply_login_settings(
             data,
             method=self.login_method.get(),
-            username=self._setting_value("instagram_username"),
-            password=self._setting_value("instagram_password"),
             browser_label=self.browser_choice.get(),
             profile=self.browser_profile_entry.get().strip(),
             cookie_file=self._setting_value("cookies_file"),
         )
-        if self.login_method.get() == LOGIN_ACCOUNT_PASSWORD:
-            username = self._setting_value("instagram_username")
-            password = self._setting_value("instagram_password")
-            if not username or not password:
-                self._append_log("警告：账号密码登录未填写完整，Instagram 内容可能无法下载。")
-        elif self.login_method.get() == LOGIN_COOKIE_FILE:
+        if self.login_method.get() == LOGIN_COOKIE_FILE:
             cookie_file = self._setting_value("cookies_file")
             if not cookie_file:
                 self._append_log("警告：Instagram 登录 Cookie 文件未设置，部分内容可能需要登录。")
@@ -1628,20 +1551,13 @@ class InsEagleSyncApp(_BaseWindow):
 
     def _login_method_changed(self, value: str | None = None) -> None:
         method = value or self.login_method.get()
-        if method == LOGIN_ACCOUNT_PASSWORD:
-            self.account_login_frame.grid()
-            self.browser_login_frame.grid_remove()
-            self.cookie_file_frame.grid_remove()
-        elif method == LOGIN_BROWSER:
-            self.account_login_frame.grid_remove()
+        if method == LOGIN_BROWSER:
             self.browser_login_frame.grid()
             self.cookie_file_frame.grid_remove()
         elif method == LOGIN_COOKIE_FILE:
-            self.account_login_frame.grid_remove()
             self.browser_login_frame.grid_remove()
             self.cookie_file_frame.grid()
         else:
-            self.account_login_frame.grid_remove()
             self.browser_login_frame.grid_remove()
             self.cookie_file_frame.grid_remove()
 
@@ -1725,7 +1641,7 @@ class InsEagleSyncApp(_BaseWindow):
             for message in messages:
                 self._queue_log(message)
             failed = any(message.startswith("警告：") or message.startswith("错误：") for message in messages)
-            if failed and active_login_method(config) == LOGIN_METHOD_BROWSER and not self.browser_cookie_help_prompted:
+            if failed and config.cookies.from_browser and not self.browser_cookie_help_prompted:
                 self.browser_cookie_help_prompted = True
                 self.log_queue.put(SHOW_BROWSER_COOKIE_HELP)
             return {
@@ -2071,16 +1987,9 @@ class InsEagleSyncApp(_BaseWindow):
         return self.config.staging_dir / "unknown" / info.shortcode
 
     def _warn_about_cookies(self) -> None:
-        method = active_login_method(self.config)
-        if method == LOGIN_METHOD_NONE:
+        if not self.config.cookies.enabled:
             return
-        if method == LOGIN_METHOD_PASSWORD:
-            if not self.config.login.username or not self.config.login.password:
-                self._append_log("警告：账号密码登录未填写完整，Instagram 内容可能无法下载。")
-            return
-        if method == LOGIN_METHOD_BROWSER:
-            return
-        if method != LOGIN_METHOD_COOKIE_FILE:
+        if self.config.cookies.from_browser:
             return
         cookie_file = self.config.cookies.file
         if cookie_file is None:
@@ -2148,7 +2057,7 @@ class InsEagleSyncApp(_BaseWindow):
         self.log_queue.put(sanitized)
         if should_show_login_failure_hint(sanitized):
             self.log_queue.put(FRIENDLY_LOGIN_FAILURE_HINT)
-            if active_login_method(self.config) == LOGIN_METHOD_BROWSER and not self.browser_cookie_help_prompted:
+            if self.config.cookies.from_browser and not self.browser_cookie_help_prompted:
                 self.browser_cookie_help_prompted = True
                 self.log_queue.put(SHOW_BROWSER_COOKIE_HELP)
 
@@ -2191,14 +2100,15 @@ class InsEagleSyncApp(_BaseWindow):
         show_centered_warning(
             self,
             "浏览器读取失败",
-            "自动从浏览器读取登录状态失败。建议改用账号密码登录。\n\n"
-            "程序将切换到账号密码模式，请填写 Instagram 账号和密码后重新测试。",
+            "自动从浏览器读取登录状态失败。建议改用 cookies.txt 文件方式。\n\n"
+            "程序将切换到 cookies.txt 模式，并打开获取 cookies.txt 的说明。",
         )
         try:
-            self.login_method.set(LOGIN_ACCOUNT_PASSWORD)
-            self._login_method_changed(LOGIN_ACCOUNT_PASSWORD)
+            self.login_method.set(LOGIN_COOKIE_FILE)
+            self._login_method_changed(LOGIN_COOKIE_FILE)
         except Exception:  # noqa: BLE001 - keep the help dialog available even if widgets are unavailable.
             pass
+        self.show_cookie_help()
 
     def _append_log(self, message: object) -> None:
         self._append_log_batch([self._sanitize_log_message(message)])
@@ -2702,8 +2612,6 @@ def write_config_data(data: dict[str, Any], path: str | Path) -> None:
 def normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
     normalized = default_config_data()
     _deep_update(normalized, data)
-    if "login" not in data and isinstance(data.get("cookies"), dict):
-        normalized["login"] = legacy_login_data_from_cookies(normalized.get("cookies", {}))
     if not data.get("default_eagle_folder_path") and data.get("default_eagle_root_folder"):
         normalized["default_eagle_folder_path"] = data["default_eagle_root_folder"]
     if not normalized.get("default_eagle_root_folder") and normalized.get("default_eagle_folder_path"):
@@ -2726,10 +2634,6 @@ def default_config_data() -> dict[str, Any]:
 
 
 def get_config_value(data: dict[str, Any], key: str) -> Any:
-    if key == "instagram_username":
-        return data.get("login", {}).get("username") or ""
-    if key == "instagram_password":
-        return data.get("login", {}).get("password") or ""
     if key == "cookies_file":
         return data.get("cookies", {}).get("file") or ""
     if key == STORAGE_PARENT_KEY:
@@ -2766,17 +2670,6 @@ def get_config_value(data: dict[str, Any], key: str) -> Any:
 
 
 def get_login_form_values(data: dict[str, Any]) -> tuple[str, str, str]:
-    login = data.get("login", {})
-    method = str(login.get("method") or "").strip()
-    if method in LOGIN_METHOD_TO_LABEL:
-        if method == LOGIN_METHOD_BROWSER:
-            from_browser = str(data.get("cookies", {}).get("from_browser") or "").strip()
-            if from_browser:
-                browser_value, profile = parse_from_browser_value(from_browser)
-                return LOGIN_BROWSER, browser_label_from_value(browser_value), profile
-            return LOGIN_BROWSER, "Chrome", "Default"
-        return LOGIN_METHOD_TO_LABEL[method], "Chrome", "Default"
-
     cookies = data.get("cookies", {})
     if not cookies.get("enabled", False):
         return LOGIN_NONE, "Chrome", "Default"
@@ -2796,22 +2689,10 @@ def apply_login_settings(
     browser_label: str,
     profile: str,
     cookie_file: str,
-    username: str = "",
-    password: str = "",
 ) -> dict[str, Any]:
     updated = normalize_config_data(data)
-    login = updated["login"]
     cookies = updated["cookies"]
-    login["method"] = LOGIN_LABEL_TO_METHOD.get(method, LOGIN_METHOD_NONE)
-    login["username"] = ""
-    login["password"] = ""
-    if method == LOGIN_ACCOUNT_PASSWORD:
-        login["username"] = username.strip()
-        login["password"] = password.strip()
-        cookies["enabled"] = False
-        cookies["from_browser"] = ""
-        cookies["file"] = ""
-    elif method == LOGIN_BROWSER:
+    if method == LOGIN_BROWSER:
         cookies["enabled"] = True
         cookies["from_browser"] = build_from_browser_value(browser_label, profile)
         cookies["file"] = ""
@@ -2824,16 +2705,6 @@ def apply_login_settings(
         cookies["from_browser"] = ""
         cookies["file"] = ""
     return updated
-
-
-def legacy_login_data_from_cookies(cookies: dict[str, Any]) -> dict[str, str]:
-    if not cookies.get("enabled", False):
-        return {"method": LOGIN_METHOD_NONE, "username": "", "password": ""}
-    if str(cookies.get("from_browser") or "").strip():
-        return {"method": LOGIN_METHOD_BROWSER, "username": "", "password": ""}
-    if str(cookies.get("file") or "").strip():
-        return {"method": LOGIN_METHOD_COOKIE_FILE, "username": "", "password": ""}
-    return {"method": LOGIN_METHOD_NONE, "username": "", "password": ""}
 
 
 def apply_proxy_settings(
@@ -3179,7 +3050,7 @@ def build_login_check_command(config: AppConfig, url: str) -> list[str]:
     if not command:
         raise RuntimeError("未找到 gallery-dl，无法测试 Instagram 登录状态。")
     command.append("--config-ignore")
-    command.extend(build_auth_args(config))
+    command.extend(build_cookie_args(config))
     command.extend(["--simulate", "--range", "1-1", url or DEFAULT_LOGIN_TEST_URL])
     return command
 
@@ -3238,19 +3109,13 @@ def run_startup_checks(config: AppConfig) -> list[str]:
     else:
         messages.append("警告：Eagle 本地 API 地址为空。")
 
-    login_method = active_login_method(config)
-    if login_method == LOGIN_METHOD_PASSWORD:
-        if config.login.username and config.login.password:
-            messages.append("正常：Instagram 账号密码登录已配置。")
-        else:
-            messages.append("警告：Instagram 账号密码登录未填写完整。")
-    elif login_method == LOGIN_METHOD_NONE:
+    if not config.cookies.enabled:
         messages.append("提示：当前使用不登录模式，仅能下载公开内容。")
-    elif login_method == LOGIN_METHOD_BROWSER:
+    elif config.cookies.from_browser:
         messages.append("提示：将自动从浏览器读取 Instagram 登录状态，读取前请关闭对应浏览器。")
-    elif login_method == LOGIN_METHOD_COOKIE_FILE and config.cookies.file is None:
+    elif config.cookies.file is None:
         messages.append("警告：Instagram 登录 Cookie 文件未设置，部分内容可能需要登录。")
-    elif login_method == LOGIN_METHOD_COOKIE_FILE and config.cookies.file.exists():
+    elif config.cookies.file.exists():
         messages.append("正常：Instagram 登录 Cookie 文件已找到：<hidden>")
     else:
         messages.append("警告：Instagram 登录 Cookie 文件不存在：<hidden>")
@@ -3344,13 +3209,6 @@ def _cookie_path_candidates(
 ) -> set[str]:
     candidates: set[str] = set()
     if config_data:
-        login = config_data.get("login", {})
-        username = login.get("username") if isinstance(login, dict) else None
-        password = login.get("password") if isinstance(login, dict) else None
-        if username:
-            candidates.add(str(username))
-        if password:
-            candidates.add(str(password))
         raw = config_data.get("cookies", {}).get("file")
         if raw:
             candidates.update(_path_variants(str(raw)))
@@ -3362,10 +3220,6 @@ def _cookie_path_candidates(
                 candidates.add(profile)
     if config and config.cookies.file:
         candidates.update(_path_variants(str(config.cookies.file)))
-    if config and config.login.username:
-        candidates.add(config.login.username)
-    if config and config.login.password:
-        candidates.add(config.login.password)
     if config and config.cookies.from_browser:
         candidates.add(config.cookies.from_browser)
         _browser, profile = parse_from_browser_value(config.cookies.from_browser)

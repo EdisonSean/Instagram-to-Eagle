@@ -27,7 +27,7 @@
    - Eagle 本地 API 地址，默认通常是 `http://localhost:41595`
    - Instagram 登录方式
    - 代理模式
-6. 默认登录方式是“账号密码登录”。在“设置”页填写 Instagram 账号和密码后，先点击“测试 Instagram 登录状态”。
+6. 推荐登录方式是 `cookies.txt`。如果浏览器读取登录状态失败，请改用 `cookies.txt` 模式。
 7. 在“同步”页选择：
    - “单个帖子”：可粘贴一个或多个 `/p/`、`/reel/`、`/tv/` 链接，一行一个最方便。
    - “作者主页”：粘贴一个作者主页链接，并选择同步范围。
@@ -49,11 +49,11 @@ Instagram to Eagle/
 说明：
 
 - `config.json` 会在你首次保存设置时生成，不会内置在发布包里。
-- `cookies.txt` 不会内置；只有在账号密码登录受两步验证或风控影响时，才需要自己导出并在设置页选择。
-- 你的设置、账号密码、cookies 路径、保存地址等不会因为重新打开 exe 自动清空。
+- `cookies.txt` 不会内置，用户需要自己导出并在设置页选择。
+- 你的设置、cookies 路径、保存地址等不会因为重新打开 exe 自动清空。
 - 更新版本时，建议先关闭旧版程序，再使用新的发布包运行。
 - 如果日志提示 `yt-dlp` 缺失，通常不一定代表失败；gallery-dl 会尝试备用下载方式。
-- 如果日志提示 Instagram 登录、403、401 或跳转登录页，先确认账号、密码和代理；如果账号触发验证，再改用 `cookies.txt`。
+- 如果日志提示 Instagram 登录、403、401 或跳转登录页，优先重新导出 `cookies.txt`。
 
 ## 功能概览
 
@@ -61,7 +61,7 @@ Instagram to Eagle/
 - 单帖同步：支持 `/p/`、`/reel/`、`/tv/` 链接。
 - 作者主页同步：支持不限制数量、最近 N 条、按时间范围同步。
 - Instagram URL 自动规范化：自动清理 query 和 fragment。
-- 登录方式：账号密码登录、`cookies.txt`、实验性浏览器读取、不登录模式。
+- 登录方式：`cookies.txt`、实验性浏览器读取、不登录模式。
 - 代理模式：自动检测系统代理、手动代理、不使用代理。
 - Eagle 文件夹选择器：在 GUI 内选择目标 Eagle 文件夹。
 - staging 预览和手动导入。
@@ -107,7 +107,7 @@ ins-eagle-sync-gui
 
 GUI 的基本流程：
 
-1. 在“设置”页配置 staging 目录、缓存目录、Eagle API、Instagram 登录方式和代理。
+1. 在“设置”页配置 staging 目录、缓存目录、Eagle API、cookies 和代理。
 2. 在“同步”页选择“单个帖子”或“作者主页”。
 3. 粘贴 Instagram URL。
 4. 选择 Eagle 目标文件夹。
@@ -115,32 +115,9 @@ GUI 的基本流程：
 
 单个帖子模式只显示单帖需要的参数，不会传 `max_posts` 或时间范围。作者主页模式会显示同步范围参数。
 
-## Instagram 账号密码登录
-
-GUI 默认使用账号密码登录。设置步骤：
-
-1. 打开“设置”页。
-2. 在“Instagram 登录方式”选择“账号密码登录（默认）”。
-3. 填写 Instagram 账号和密码。
-4. 点击“测试 Instagram 登录状态”。
-
-程序会把账号密码保存在本地 `config.json` 中，并在运行日志里隐藏账号和密码。不要分享 `config.json`、日志截图或打包后的本地配置目录。
-
-对应配置示例：
-
-```json
-"login": {
-  "method": "password",
-  "username": "your_instagram_username",
-  "password": "your_instagram_password"
-}
-```
-
-如果账号启用了两步验证、需要安全验证，或 Instagram 临时风控导致账号密码登录失败，请先在浏览器完成验证；仍失败时再改用 `cookies.txt`。
-
 ## cookies.txt 获取方法
 
-`cookies.txt` 是备用登录方式，适合账号密码登录被验证流程拦住的情况。推荐使用 Netscape 格式的 `cookies.txt`：
+推荐使用 Netscape 格式的 `cookies.txt`。常见方式：
 
 1. 在浏览器中登录 Instagram。
 2. 使用能导出 Netscape cookies 的浏览器扩展，例如 `Get cookies.txt LOCALLY`。
@@ -151,14 +128,9 @@ GUI 默认使用账号密码登录。设置步骤：
    E:/INS_Eagle_Sync/_cache/instagram-cookies.txt
    ```
 
-5. 在 GUI 设置页选择 `cookies.txt` 文件，或在 `config.json` 中填写：
+5. 在 `config.json` 或 GUI 设置页中填写：
 
    ```json
-   "login": {
-     "method": "cookie_file",
-     "username": "",
-     "password": ""
-   },
    "cookies": {
      "enabled": true,
      "from_browser": "",
@@ -166,7 +138,7 @@ GUI 默认使用账号密码登录。设置步骤：
    }
    ```
 
-如果看到 Instagram 跳转登录页、403、401，可能是账号密码错误、代理不可用、账号触发验证，或 cookies 失效。使用 cookies 模式时通常需要重新导出。
+如果看到 Instagram 跳转登录页、403、401，通常是 cookies 失效，需要重新导出。
 
 ## 浏览器读取 cookies
 
@@ -179,7 +151,7 @@ GUI 支持从浏览器读取 cookies，但这是实验性功能。
 - 浏览器配置文件路径和当前用户不一致。
 - gallery-dl 或 Python 版本对浏览器 cookies 支持不完整。
 
-如果浏览器读取失败，优先改用账号密码登录；如果账号触发验证，再改用导出的 Netscape `cookies.txt`。
+如果浏览器读取失败，优先改用导出的 Netscape `cookies.txt`。这是最稳定的方式。
 
 ## 代理模式
 
@@ -422,10 +394,10 @@ dist/
 打包后仍需要准备或确认：
 
 - 可写的 `_cache` 和 `_staging` 目录
-- 已配置的 Instagram 登录方式，默认是账号密码；必要时准备有效的 `cookies.txt`
+- 有效的 `cookies.txt`
 - 已启动的 Eagle
 
-账号密码和 `cookies.txt` 不会内置进发布包，用户需要在 GUI 设置页填写或选择。`config.json` 会在用户首次保存设置时生成；设置不会被写进 exe。只要发布或升级时保留 `config.json`，账号密码、cookies 路径、保存地址、代理和 Eagle 文件夹设置就不会清空。删除 `config.json` 或换到一个没有 `config.json` 的新目录运行时，程序会按默认配置重新创建。
+`cookies.txt` 不会内置进发布包，用户需要在 GUI 设置页选择。`config.json` 会在用户首次保存设置时生成；设置不会被写进 exe。只要发布或升级时保留 `config.json`，cookies 路径、保存地址、代理和 Eagle 文件夹设置就不会清空。删除 `config.json` 或换到一个没有 `config.json` 的新目录运行时，程序会按默认配置重新创建。
 
 GUI 启动检查会显示当前是开发环境还是已打包运行，并提示 `gallery-dl` / `yt-dlp` 是否可用。如果存在 `tools/gallery-dl.exe`，会显示已找到内置 exe；如果没有 exe 但 PyInstaller 已正确收集模块，会显示已内置 `gallery-dl Python 模块`。
 
@@ -461,17 +433,13 @@ py -m ins_eagle_sync
 py -m pip install -e .
 ```
 
-### Instagram 登录失败
-
-看到登录跳转、401、403 或抓不到内容时，先确认账号、密码和代理是否正确。如果账号启用了两步验证或需要安全验证，请先在浏览器完成验证；仍失败时可以改用 `cookies.txt`。
-
 ### cookies 失效
 
-使用 cookies 模式时，如果看到登录跳转、401、403 或抓不到内容，重新导出 Instagram `cookies.txt`，并确认 `login.method` 为 `cookie_file`，`cookies.enabled` 为 `true`，`cookies.file` 指向正确路径。
+看到登录跳转、401、403 或抓不到内容时，重新导出 Instagram `cookies.txt`，并确认 `cookies.enabled` 为 `true`，`cookies.file` 指向正确路径。
 
 ### 浏览器 cookies Permission denied
 
-关闭浏览器后重试。如果仍失败，改用账号密码登录；账号触发验证时再改用 Netscape `cookies.txt`。
+关闭浏览器后重试。如果仍失败，改用 Netscape `cookies.txt`。
 
 ### 代理不生效
 
@@ -508,7 +476,7 @@ py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --
 
 ## 不要提交这些文件
 
-不要提交包含账号、密码、cookies 或本地运行数据的文件：
+不要提交包含账号、cookies 或本地运行数据的文件：
 
 - `cookies.txt`
 - `config.json`
