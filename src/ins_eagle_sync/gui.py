@@ -271,13 +271,13 @@ class InsEagleSyncApp(_BaseWindow):
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=0, minsize=LOG_PANEL_WIDTH)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
         self._build_header()
         self._build_cookie_setup_guide()
 
         self.main_panel = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_panel.grid(row=2, column=0, sticky="nsew", padx=(12, 6), pady=(0, 10))
+        self.main_panel.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=(0, 10))
         self.main_panel.grid_columnconfigure(0, weight=1)
         self.main_panel.grid_rowconfigure(0, weight=1)
 
@@ -302,6 +302,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._show_main_tab(SYNC_TAB_NAME)
         self._build_log_panel()
         self._build_status_bar()
+        self._update_cookie_setup_guide()
 
     def _set_window_icon(self) -> None:
         icon_path = get_resource_path(APP_ICON_RELATIVE_PATH)
@@ -316,19 +317,26 @@ class InsEagleSyncApp(_BaseWindow):
             self.icon_status_message = None
 
     def _build_status_bar(self) -> None:
-        status_bar = ctk.CTkFrame(self, corner_radius=0)
-        status_bar.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
-        status_bar.grid_columnconfigure(2, weight=1)
-        status_bar.configure(fg_color=COLORS["surface"], border_width=1, border_color=COLORS["border_soft"])
-        ctk.CTkLabel(status_bar, text="状态：", text_color=COLORS["text_muted"], font=FONTS["body"]).grid(
+        self.status_bar = ctk.CTkFrame(self, corner_radius=0)
+        self.status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
+        self.status_bar.grid_columnconfigure(2, weight=1)
+        self.status_bar.configure(fg_color=COLORS["surface"], border_width=1, border_color=COLORS["border_soft"])
+        ctk.CTkLabel(self.status_bar, text="状态：", text_color=COLORS["text_muted"], font=FONTS["body"]).grid(
             row=0, column=0, padx=(12, 4), pady=6, sticky="w"
         )
-        ctk.CTkLabel(status_bar, textvariable=self.status_var, text_color=COLORS["text"], font=FONTS["body"]).grid(
+        ctk.CTkLabel(self.status_bar, textvariable=self.status_var, text_color=COLORS["text"], font=FONTS["body"]).grid(
             row=0, column=1, padx=(0, 10), pady=6, sticky="w"
         )
-        self.status_dot = ctk.CTkLabel(status_bar, text="●", text_color=COLORS["success"], font=(FONTS["body"][0], 12))
+        self.status_dot = ctk.CTkLabel(self.status_bar, text="●", text_color=COLORS["success"], font=(FONTS["body"][0], 12))
         self.status_dot.grid(row=0, column=2, padx=(0, 12), pady=6, sticky="w")
-        self.toggle_log_button = self._button(status_bar, "隐藏日志", self.toggle_log_panel, kind="ghost", width=96, height=26)
+        self.toggle_log_button = self._button(
+            self.status_bar,
+            "隐藏日志",
+            self.toggle_log_panel,
+            kind="ghost",
+            width=96,
+            height=26,
+        )
         self.toggle_log_button.grid(row=0, column=3, padx=10, pady=4, sticky="e")
 
     def _build_cookie_setup_guide(self) -> None:
@@ -339,7 +347,6 @@ class InsEagleSyncApp(_BaseWindow):
             border_width=1,
             border_color=COLORS["warning"],
         )
-        self.cookie_setup_guide.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 10))
         self.cookie_setup_guide.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(
             self.cookie_setup_guide,
@@ -380,7 +387,6 @@ class InsEagleSyncApp(_BaseWindow):
             kind="ghost",
             width=72,
         ).grid(row=0, column=4, rowspan=2, padx=(0, SPACE["lg"]), pady=SPACE["md"], sticky="e")
-        self._update_cookie_setup_guide()
 
     def _build_header(self) -> None:
         header = ctk.CTkFrame(
@@ -458,15 +464,31 @@ class InsEagleSyncApp(_BaseWindow):
 
     def dismiss_cookie_setup_guide(self) -> None:
         self.cookie_setup_guide.grid_remove()
+        self._place_main_layout(show_cookie_guide=False)
 
     def _update_cookie_setup_guide(self) -> None:
         guide = getattr(self, "cookie_setup_guide", None)
         if guide is None:
             return
         if should_show_cookie_setup_guide(self.config):
-            guide.grid()
+            guide.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 10))
+            self._place_main_layout(show_cookie_guide=True)
         else:
             guide.grid_remove()
+            self._place_main_layout(show_cookie_guide=False)
+
+    def _place_main_layout(self, *, show_cookie_guide: bool) -> None:
+        content_row = 2 if show_cookie_guide else 1
+        status_row = content_row + 1
+        self.grid_rowconfigure(1, weight=0 if show_cookie_guide else 1)
+        self.grid_rowconfigure(2, weight=1 if show_cookie_guide else 0)
+        self.grid_rowconfigure(3, weight=0)
+        if hasattr(self, "main_panel"):
+            self.main_panel.grid(row=content_row, column=0, sticky="nsew", padx=(12, 6), pady=(0, 10))
+        if hasattr(self, "log_panel"):
+            self.log_panel.grid(row=content_row, column=1, sticky="nsew", padx=(6, 12), pady=(0, 10))
+        if hasattr(self, "status_bar"):
+            self.status_bar.grid(row=status_row, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
 
     def _on_root_configure(self, event: object) -> None:
         if getattr(event, "widget", None) is not self:
@@ -557,7 +579,7 @@ class InsEagleSyncApp(_BaseWindow):
             border_width=1,
             border_color=COLORS["border"],
         )
-        self.log_panel.grid(row=2, column=1, sticky="nsew", padx=(6, 12), pady=(0, 10))
+        self.log_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(0, 10))
         self.log_panel.grid_columnconfigure(0, weight=1)
         self.log_panel.grid_rowconfigure(1, weight=1)
 

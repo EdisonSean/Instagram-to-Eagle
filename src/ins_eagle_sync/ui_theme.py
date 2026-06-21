@@ -29,13 +29,13 @@ COLORS = {
 }
 
 FONTS = {
-    "title": (FONT_FAMILY, 18, "bold"),
-    "page_title": (FONT_FAMILY, 18, "bold"),
-    "section": (FONT_FAMILY, 14, "bold"),
-    "label": (FONT_FAMILY, 12, "normal"),
-    "body": (FONT_FAMILY, 12, "normal"),
-    "small": (FONT_FAMILY, 10, "normal"),
-    "button": (FONT_FAMILY, 12, "normal"),
+    "title": (FONT_FAMILY, 22, "bold"),
+    "page_title": (FONT_FAMILY, 22, "bold"),
+    "section": (FONT_FAMILY, 16, "bold"),
+    "label": (FONT_FAMILY, 14, "bold"),
+    "body": (FONT_FAMILY, 13, "normal"),
+    "small": (FONT_FAMILY, 12, "normal"),
+    "button": (FONT_FAMILY, 13, "normal"),
     "mono": ("Consolas", 13, "normal"),
 }
 
@@ -53,8 +53,8 @@ RADIUS = {
     "pill": 6,
 }
 
-BUTTON_HEIGHT = 32
-INPUT_HEIGHT = 32
+BUTTON_HEIGHT = 34
+INPUT_HEIGHT = 34
 
 BUTTON_STYLES = {
     "primary": {

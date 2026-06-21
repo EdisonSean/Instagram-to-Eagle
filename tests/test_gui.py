@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from ins_eagle_sync import gui
 from ins_eagle_sync.config import load_config
-from ins_eagle_sync.ui_theme import APP_TITLE, COLORS
+from ins_eagle_sync.ui_theme import APP_TITLE, BUTTON_HEIGHT, COLORS, FONTS, INPUT_HEIGHT
 
 
 class FakeEntry:
@@ -55,9 +55,11 @@ class FakeFrame:
     def __init__(self) -> None:
         self.visible = True
         self.propagate = True
+        self.grid_calls: list[tuple[tuple, dict]] = []
 
     def grid(self, *args, **kwargs) -> None:
         self.visible = True
+        self.grid_calls.append((args, kwargs))
 
     def grid_remove(self) -> None:
         self.visible = False
@@ -286,6 +288,15 @@ def test_gui_module_exposes_main() -> None:
     assert gui.STATUS_READY == "就绪"
     assert gui.STATUS_RUNNING == "运行中"
     assert gui.LOG_PANEL_TITLE == "运行日志"
+
+
+def test_ui_font_hierarchy_uses_larger_harmony_fonts_without_changing_log_font() -> None:
+    assert FONTS["page_title"] == ("HarmonyOS Sans SC", 22, "bold")
+    assert FONTS["section"][1] > FONTS["label"][1] > FONTS["body"][1] > FONTS["small"][1]
+    assert FONTS["label"][2] == "bold"
+    assert FONTS["mono"] == ("Consolas", 13, "normal")
+    assert BUTTON_HEIGHT == 34
+    assert INPUT_HEIGHT == 34
 
 
 def test_resolve_config_path_falls_back_to_example(monkeypatch, project_tmp_path) -> None:
@@ -908,6 +919,31 @@ def test_cookie_setup_guide_hides_for_browser_login_choice(project_tmp_path) -> 
     config = load_config(config_path)
 
     assert not gui.should_show_cookie_setup_guide(config)
+
+
+def test_hidden_cookie_setup_guide_does_not_reserve_top_layout_row() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.main_panel = FakeFrame()
+    app.log_panel = FakeFrame()
+    app.status_bar = FakeFrame()
+    row_weights = {}
+    app.grid_rowconfigure = lambda row, **kwargs: row_weights.update({row: kwargs})
+
+    gui.InsEagleSyncApp._place_main_layout(app, show_cookie_guide=False)
+
+    assert app.main_panel.grid_calls[-1][1]["row"] == 1
+    assert app.log_panel.grid_calls[-1][1]["row"] == 1
+    assert app.status_bar.grid_calls[-1][1]["row"] == 2
+    assert row_weights[1]["weight"] == 1
+    assert row_weights[2]["weight"] == 0
+
+    gui.InsEagleSyncApp._place_main_layout(app, show_cookie_guide=True)
+
+    assert app.main_panel.grid_calls[-1][1]["row"] == 2
+    assert app.log_panel.grid_calls[-1][1]["row"] == 2
+    assert app.status_bar.grid_calls[-1][1]["row"] == 3
+    assert row_weights[1]["weight"] == 0
+    assert row_weights[2]["weight"] == 1
 
 
 def test_login_check_browser_command_log_hides_profile(project_tmp_path) -> None:
