@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ins_eagle_sync.config import AppConfig, CookiesConfig, DownloadConfig, ProxyConfig
+from ins_eagle_sync.config import AppConfig, CookiesConfig, DownloadConfig, LoginConfig, ProxyConfig
 from ins_eagle_sync.gallerydl_runner import (
     DATE_FILTER_FALLBACK_HINT,
     DATE_FILTER_FALLBACK_MAX_POSTS,
@@ -66,7 +66,7 @@ class CancellableFakePopen(FakePopen):
         return self.returncode
 
 
-def make_config(project_tmp_path, *, proxy_enabled=False, cookies=None, yt_dlp_executable=None):
+def make_config(project_tmp_path, *, proxy_enabled=False, cookies=None, login=None, yt_dlp_executable=None):
     return AppConfig(
         gallery_dl_executable="py -m gallery_dl",
         yt_dlp_executable=yt_dlp_executable,
@@ -84,6 +84,7 @@ def make_config(project_tmp_path, *, proxy_enabled=False, cookies=None, yt_dlp_e
         ),
         download=DownloadConfig(sleep_request="8-15", max_posts=50),
         cookies=cookies or CookiesConfig(),
+        login=login or LoginConfig(),
     )
 
 
@@ -354,6 +355,21 @@ def test_build_gallery_dl_request_can_use_cookie_file(project_tmp_path):
     assert str(cookie_file) in request.command
 
 
+def test_build_gallery_dl_request_can_use_account_password(project_tmp_path):
+    config = make_config(
+        project_tmp_path,
+        login=LoginConfig(method="password", username="artist@example.com", password="secret-pass"),
+    )
+
+    request = build_gallery_dl_request(config, "https://www.instagram.com/p/DYld7hQCT90/")
+
+    assert "--username" in request.command
+    assert request.command[request.command.index("--username") + 1] == "artist@example.com"
+    assert "--password" in request.command
+    assert request.command[request.command.index("--password") + 1] == "secret-pass"
+    assert "--no-input" in request.command
+
+
 def test_run_gallery_dl_missing_cookie_file_skips_subprocess(project_tmp_path):
     missing_cookie_file = project_tmp_path / "missing-cookies.txt"
     config = make_config(
@@ -441,7 +457,7 @@ def test_run_gallery_dl_logs_login_redirect_hint(project_tmp_path):
             log=logs.append,
         )
 
-    assert any("enable cookies" in line for line in logs)
+    assert any("account/password" in line for line in logs)
     assert any("--config-ignore" in line for line in logs)
 
 
@@ -583,10 +599,24 @@ def test_proxy_env_is_none_when_proxy_disabled(project_tmp_path):
 
 
 def test_cookie_values_are_hidden_in_logged_command():
-    command = ["py", "-m", "gallery_dl", "--cookies", "secret.txt", "--cookies-from-browser=chrome"]
+    command = [
+        "py",
+        "-m",
+        "gallery_dl",
+        "--cookies",
+        "secret.txt",
+        "--cookies-from-browser=chrome",
+        "--username",
+        "artist@example.com",
+        "--password=secret-pass",
+    ]
 
     logged = format_command_for_log(command)
 
     assert "secret.txt" not in logged
+    assert "artist@example.com" not in logged
+    assert "secret-pass" not in logged
     assert "--cookies <hidden>" in logged
     assert "--cookies-from-browser=<hidden>" in logged
+    assert "--username <hidden>" in logged
+    assert "--password=<hidden>" in logged

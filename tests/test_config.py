@@ -79,6 +79,35 @@ def test_dev_environment_can_fallback_to_py_gallery_dl(monkeypatch, tmp_path) ->
     assert resolve_gallery_dl_command(config) == ["py", "-m", "gallery_dl"]
 
 
+def test_legacy_cookie_config_derives_login_method() -> None:
+    data = make_config_data()
+    data["cookies"] = {
+        "enabled": True,
+        "from_browser": "",
+        "file": "E:/INS_Eagle_Sync/_cache/instagram-cookies.txt",
+    }
+
+    config = parse_config(data)
+
+    assert config.login.method == "cookie_file"
+    assert config.cookies.file == Path("E:/INS_Eagle_Sync/_cache/instagram-cookies.txt")
+
+
+def test_password_login_config_is_loaded() -> None:
+    data = make_config_data()
+    data["login"] = {
+        "method": "password",
+        "username": "artist@example.com",
+        "password": "secret-pass",
+    }
+
+    config = parse_config(data)
+
+    assert config.login.method == "password"
+    assert config.login.username == "artist@example.com"
+    assert config.login.password == "secret-pass"
+
+
 def test_tools_ytdlp_exe_is_detected_in_packaged_app(monkeypatch, tmp_path) -> None:
     app_dir = tmp_path / "dist" / "Instagram to Eagle"
     tools_dir = app_dir / "tools"

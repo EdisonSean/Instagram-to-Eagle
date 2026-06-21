@@ -560,6 +560,27 @@ def test_cookie_file_login_settings_write_cookie_path(project_tmp_path) -> None:
     assert loaded.cookies.file == cookie_path
 
 
+def test_account_password_login_settings_write_credentials(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    data = gui.apply_login_settings(
+        gui.default_config_data(),
+        method=gui.LOGIN_ACCOUNT_PASSWORD,
+        browser_label="Chrome",
+        profile="Default",
+        cookie_file="",
+        username="artist@example.com",
+        password="secret-pass",
+    )
+
+    gui.write_config_data(data, config_path)
+    loaded = load_config(config_path)
+
+    assert loaded.login.method == "password"
+    assert loaded.login.username == "artist@example.com"
+    assert loaded.login.password == "secret-pass"
+    assert loaded.cookies.enabled is False
+
+
 def test_no_login_settings_disable_cookies(project_tmp_path) -> None:
     config_path = project_tmp_path / "config.json"
     data = gui.apply_login_settings(
@@ -578,10 +599,10 @@ def test_no_login_settings_disable_cookies(project_tmp_path) -> None:
     assert loaded.cookies.file is None
 
 
-def test_default_login_mode_is_no_login() -> None:
+def test_default_login_mode_is_account_password() -> None:
     method, browser_label, profile = gui.get_login_form_values(gui.default_config_data())
 
-    assert method == gui.LOGIN_NONE
+    assert method == gui.LOGIN_ACCOUNT_PASSWORD
     assert browser_label == "Chrome"
     assert profile == "Default"
 
@@ -608,21 +629,18 @@ def test_centered_warning_uses_centered_host(monkeypatch) -> None:
     assert calls[0]["parent"] is host
 
 
-def test_browser_cookie_failure_prompt_switches_to_cookie_file(monkeypatch) -> None:
+def test_browser_cookie_failure_prompt_switches_to_account_password(monkeypatch) -> None:
     app = object.__new__(gui.InsEagleSyncApp)
     app.login_method = FakeChoice(gui.LOGIN_BROWSER)
     app.changed_to = None
-    app.help_opened = False
     app._login_method_changed = lambda value: setattr(app, "changed_to", value)
-    app.show_cookie_help = lambda: setattr(app, "help_opened", True)
     warnings = []
     monkeypatch.setattr(gui, "show_centered_warning", lambda *args: warnings.append(args))
 
     gui.InsEagleSyncApp._show_browser_cookie_help_prompt(app)
 
-    assert app.login_method.get() == gui.LOGIN_COOKIE_FILE
-    assert app.changed_to == gui.LOGIN_COOKIE_FILE
-    assert app.help_opened is True
+    assert app.login_method.get() == gui.LOGIN_ACCOUNT_PASSWORD
+    assert app.changed_to == gui.LOGIN_ACCOUNT_PASSWORD
     assert warnings
 
 
@@ -808,6 +826,24 @@ def test_sanitize_log_message_hides_browser_profile() -> None:
     assert "<hidden>" in message
 
 
+def test_sanitize_log_message_hides_account_password() -> None:
+    data = gui.apply_login_settings(
+        gui.default_config_data(),
+        method=gui.LOGIN_ACCOUNT_PASSWORD,
+        browser_label="Chrome",
+        profile="Default",
+        cookie_file="",
+        username="artist@example.com",
+        password="secret-pass",
+    )
+
+    message = gui.sanitize_log_message("login artist@example.com / secret-pass", config_data=data)
+
+    assert "artist@example.com" not in message
+    assert "secret-pass" not in message
+    assert "<hidden>" in message
+
+
 def test_login_check_hides_cookie_path(project_tmp_path) -> None:
     cookie_path = project_tmp_path / "instagram-cookies.txt"
     config_path = project_tmp_path / "config.json"
@@ -846,6 +882,8 @@ def test_login_check_no_login_mode_omits_cookie_args(project_tmp_path) -> None:
 
     assert "--cookies" not in command
     assert "--cookies-from-browser" not in command
+    assert "--username" not in command
+    assert "--password" not in command
 
 
 def test_login_check_browser_command_log_hides_profile(project_tmp_path) -> None:
@@ -869,7 +907,32 @@ def test_login_check_browser_command_log_hides_profile(project_tmp_path) -> None
     assert "--cookies-from-browser <hidden>" in joined
 
 
-def test_browser_login_check_failure_suggests_closing_browser(project_tmp_path) -> None:
+def test_login_check_account_password_command_log_hides_credentials(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    data = gui.apply_login_settings(
+        gui.default_config_data(),
+        method=gui.LOGIN_ACCOUNT_PASSWORD,
+        browser_label="Chrome",
+        profile="Default",
+        cookie_file="",
+        username="artist@example.com",
+        password="secret-pass",
+    )
+    gui.write_config_data(data, config_path)
+    config = load_config(config_path)
+    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch("ins_eagle_sync.gui.subprocess.run", return_value=completed):
+        messages = gui.run_instagram_login_check(config)
+
+    joined = "\n".join(messages)
+    assert "artist@example.com" not in joined
+    assert "secret-pass" not in joined
+    assert "--username <hidden>" in joined
+    assert "--password <hidden>" in joined
+
+
+def test_browser_login_check_failure_suggests_login_settings(project_tmp_path) -> None:
     config_path = project_tmp_path / "config.json"
     data = gui.apply_login_settings(
         gui.default_config_data(),
@@ -889,7 +952,7 @@ def test_browser_login_check_failure_suggests_closing_browser(project_tmp_path) 
     with patch("ins_eagle_sync.gui.subprocess.run", return_value=completed):
         messages = gui.run_instagram_login_check(config)
 
-    assert any("关闭浏览器后重试" in message for message in messages)
+    assert any("账号、密码和代理" in message for message in messages)
 
 
 def test_login_redirect_generates_friendly_hint(project_tmp_path) -> None:

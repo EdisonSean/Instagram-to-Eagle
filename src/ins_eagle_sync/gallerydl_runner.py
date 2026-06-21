@@ -10,7 +10,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import AppConfig, resolve_gallery_dl_command, resolve_ytdlp_command
+from .config import (
+    LOGIN_METHOD_BROWSER,
+    LOGIN_METHOD_COOKIE_FILE,
+    LOGIN_METHOD_NONE,
+    LOGIN_METHOD_PASSWORD,
+    AppConfig,
+    resolve_gallery_dl_command,
+    resolve_ytdlp_command,
+)
 from .proxy_utils import build_proxy_env
 from .utils import InstagramMode, detect_instagram_url
 
@@ -115,7 +123,7 @@ def build_gallery_dl_command(
     command.append("--config-ignore")
     if verbose:
         command.append("--verbose")
-    command.extend(build_cookie_args(config))
+    command.extend(build_auth_args(config))
     command.append("--write-metadata")
     if not ignore_archive:
         command.extend(["--download-archive", str(config.archive_db)])
@@ -148,17 +156,47 @@ def build_gallery_dl_command(
     return command
 
 
-def build_cookie_args(config: AppConfig) -> list[str]:
-    if not config.cookies.enabled:
+def build_auth_args(config: AppConfig) -> list[str]:
+    method = active_login_method(config)
+    if method == LOGIN_METHOD_NONE:
         return []
 
-    if config.cookies.file is not None:
+    if method == LOGIN_METHOD_PASSWORD:
+        username = getattr(config.login, "username", None)
+        password = getattr(config.login, "password", None)
+        if not username or not password:
+            raise ValueError("账号密码登录需要填写 Instagram 账号和密码。")
+        return ["--username", username, "--password", password, "--no-input"]
+
+    if method == LOGIN_METHOD_COOKIE_FILE and config.cookies.file is not None:
         return ["--cookies", str(config.cookies.file)]
 
-    if config.cookies.from_browser:
+    if method == LOGIN_METHOD_BROWSER and config.cookies.from_browser:
         return ["--cookies-from-browser", config.cookies.from_browser]
 
-    raise ValueError("cookies.enabled is true, but no cookies.file or cookies.from_browser is configured")
+    raise ValueError("Instagram 登录配置不完整，请在设置页重新保存登录方式。")
+
+
+def build_cookie_args(config: AppConfig) -> list[str]:
+    return build_auth_args(config)
+
+
+def active_login_method(config: AppConfig) -> str:
+    method = getattr(getattr(config, "login", None), "method", LOGIN_METHOD_NONE)
+    if method == LOGIN_METHOD_PASSWORD:
+        username = getattr(config.login, "username", None)
+        password = getattr(config.login, "password", None)
+        if username and password:
+            return method
+        if not config.cookies.enabled:
+            return method
+    elif method != LOGIN_METHOD_NONE or not config.cookies.enabled:
+        return method
+    if config.cookies.from_browser:
+        return LOGIN_METHOD_BROWSER
+    if config.cookies.file is not None:
+        return LOGIN_METHOD_COOKIE_FILE
+    return LOGIN_METHOD_NONE
 
 
 @lru_cache(maxsize=16)
@@ -373,7 +411,7 @@ def validate_cookie_file(
     dry_run: bool,
     log: LogFn,
 ) -> subprocess.CompletedProcess[str] | None:
-    if not config.cookies.enabled or config.cookies.file is None or config.cookies.file.exists():
+    if active_login_method(config) != LOGIN_METHOD_COOKIE_FILE or config.cookies.file is None or config.cookies.file.exists():
         return None
 
     message = (
@@ -463,15 +501,15 @@ def log_gallery_dl_result(
         if is_browser_cookie_error(stderr):
             log(
                 "hint: gallery-dl could not use browser cookies. Chrome may have locked "
-                "or encrypted them in a way this Python process cannot read. Export "
-                "Instagram cookies to a Netscape cookies.txt file and set cookies.file "
-                "in the project config.json."
+                "or encrypted them in a way this Python process cannot read. Use "
+                "the account-password login mode, or export Instagram cookies to a "
+                "Netscape cookies.txt file and set cookies.file in the project config.json."
             )
         if is_instagram_login_redirect(stderr):
             log(
                 "hint: Instagram redirected gallery-dl to the login page. "
-                "Create a project config.json from config.example.json and enable cookies "
-                "with cookies.from_browser or cookies.file. This tool runs gallery-dl with "
+                "Open Settings and fill Instagram account/password, or configure "
+                "cookies.from_browser or cookies.file. This tool runs gallery-dl with "
                 "--config-ignore, so user-level gallery-dl config files are not loaded."
             )
         if is_network_timeout_warning(stderr):
@@ -547,7 +585,7 @@ def sanitize_command_for_log(command: list[str]) -> list[str]:
             hide_next = False
             continue
 
-        if "cookie" in lowered:
+        if _is_sensitive_command_option(lowered):
             if "=" in part:
                 option, _value = part.split("=", 1)
                 sanitized.append(f"{option}=<hidden>")
@@ -559,6 +597,19 @@ def sanitize_command_for_log(command: list[str]) -> list[str]:
         sanitized.append(part)
 
     return sanitized
+
+
+def _is_sensitive_command_option(lowered: str) -> bool:
+    sensitive_options = (
+        "--cookies",
+        "-c",
+        "--cookies-from-browser",
+        "--username",
+        "-u",
+        "--password",
+        "-p",
+    )
+    return any(lowered == option or lowered.startswith(f"{option}=") for option in sensitive_options)
 
 
 def find_metadata_files(staging_dir: Path) -> list[Path]:

@@ -17,6 +17,11 @@
     "https_proxy": "",
     "detected_proxy": ""
   },
+  "login": {
+    "method": "password",
+    "username": "",
+    "password": ""
+  },
   "cookies": {
     "enabled": false,
     "from_browser": "",

@@ -4,7 +4,7 @@ import json
 import os
 import shlex
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,16 @@ DEFAULT_YT_DLP_EXECUTABLE = ""
 GALLERY_DL_EXE_NAME = "gallery-dl.exe"
 YT_DLP_EXE_NAME = "yt-dlp.exe"
 FROZEN_GALLERY_DL_MODULE_ARG = "--ins-eagle-sync-gallery-dl"
+LOGIN_METHOD_PASSWORD = "password"
+LOGIN_METHOD_COOKIE_FILE = "cookie_file"
+LOGIN_METHOD_BROWSER = "browser"
+LOGIN_METHOD_NONE = "none"
+LOGIN_METHOD_VALUES = {
+    LOGIN_METHOD_PASSWORD,
+    LOGIN_METHOD_COOKIE_FILE,
+    LOGIN_METHOD_BROWSER,
+    LOGIN_METHOD_NONE,
+}
 
 
 @dataclass(frozen=True)
@@ -41,6 +51,13 @@ class CookiesConfig:
 
 
 @dataclass(frozen=True)
+class LoginConfig:
+    method: str = LOGIN_METHOD_NONE
+    username: str | None = None
+    password: str | None = None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     gallery_dl_executable: str
     staging_dir: Path
@@ -52,6 +69,7 @@ class AppConfig:
     proxy: ProxyConfig
     download: DownloadConfig
     cookies: CookiesConfig
+    login: LoginConfig = field(default_factory=LoginConfig)
     yt_dlp_executable: str | None = None
     default_eagle_folder_path: str = ""
     default_eagle_folder_id: str | None = None
@@ -69,6 +87,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     proxy_data = data.get("proxy", {})
     download_data = data.get("download", {})
     cookies_data = data.get("cookies", {})
+    login_data = data.get("login", {})
     default_folder_path = str(
         data.get("default_eagle_folder_path")
         or data.get("default_eagle_root_folder")
@@ -100,6 +119,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             from_browser=_optional_text(cookies_data.get("from_browser")),
             file=_optional_path(cookies_data.get("file")),
         ),
+        login=_parse_login_config(login_data, cookies_data),
         default_eagle_folder_path=default_folder_path,
         default_eagle_folder_id=_optional_text(data.get("default_eagle_folder_id")),
         last_eagle_folder_path=str(data.get("last_eagle_folder_path") or ""),
@@ -220,3 +240,26 @@ def _proxy_mode(proxy_data: dict[str, Any]) -> str:
 
 def _proxy_enabled(proxy_data: dict[str, Any]) -> bool:
     return _proxy_mode(proxy_data) != "none"
+
+
+def _parse_login_config(login_data: object, cookies_data: object) -> LoginConfig:
+    login = login_data if isinstance(login_data, dict) else {}
+    cookies = cookies_data if isinstance(cookies_data, dict) else {}
+    method = _optional_text(login.get("method"))
+    if method not in LOGIN_METHOD_VALUES:
+        method = _legacy_login_method_from_cookies(cookies)
+    return LoginConfig(
+        method=method,
+        username=_optional_text(login.get("username")),
+        password=_optional_text(login.get("password")),
+    )
+
+
+def _legacy_login_method_from_cookies(cookies_data: dict[str, Any]) -> str:
+    if not bool(cookies_data.get("enabled", False)):
+        return LOGIN_METHOD_NONE
+    if _optional_text(cookies_data.get("from_browser")):
+        return LOGIN_METHOD_BROWSER
+    if _optional_path(cookies_data.get("file")) is not None:
+        return LOGIN_METHOD_COOKIE_FILE
+    return LOGIN_METHOD_NONE
