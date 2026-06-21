@@ -31,7 +31,7 @@ COLORS = {
 FONTS = {
     "title": (FONT_FAMILY, 22, "bold"),
     "page_title": (FONT_FAMILY, 22, "bold"),
-    "section": (FONT_FAMILY, 16, "bold"),
+    "section": (FONT_FAMILY, 18, "bold"),
     "label": (FONT_FAMILY, 14, "bold"),
     "body": (FONT_FAMILY, 13, "normal"),
     "small": (FONT_FAMILY, 12, "normal"),

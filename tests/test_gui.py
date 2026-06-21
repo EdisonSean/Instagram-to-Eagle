@@ -292,6 +292,7 @@ def test_gui_module_exposes_main() -> None:
 
 def test_ui_font_hierarchy_uses_larger_harmony_fonts_without_changing_log_font() -> None:
     assert FONTS["page_title"] == ("HarmonyOS Sans SC", 22, "bold")
+    assert FONTS["section"] == ("HarmonyOS Sans SC", 18, "bold")
     assert FONTS["section"][1] > FONTS["label"][1] > FONTS["body"][1] > FONTS["small"][1]
     assert FONTS["label"][2] == "bold"
     assert FONTS["mono"] == ("Consolas", 13, "normal")
