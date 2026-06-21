@@ -3,15 +3,541 @@
 </p>
 
 # Instagram to Eagle
-**下载地址：**
+**Download:**
 [![Releases](https://img.shields.io/github/v/release/EdisonSean/Instagram-to-Eagle?style=for-the-badge)](https://github.com/EdisonSean/Instagram-to-Eagle/releases)
+
+## English Documentation
+
+### Instagram to Eagle batch-downloads Instagram posts and imports them into Eagle with notes and source links.
+
+This is a Windows-first Python tool. It uses `gallery-dl` to download Instagram content into a local staging folder, reads the generated metadata JSON, and imports the files into Eagle through the Eagle Local API.
+
+The project provides both GUI and CLI entry points. Downloads only go to the configured staging directory; the downloader never writes directly into an Eagle library.
+
+## Part 1: Packaged Windows App
+
+If you only want to use the packaged Windows version, you do not need to install Python, `gallery-dl`, or `yt-dlp`.
+
+1. Download the latest package from [GitHub Releases](https://github.com/EdisonSean/Instagram-to-Eagle/releases).
+2. Extract the entire package. Do not copy out only `Instagram to Eagle.exe`.
+3. Run:
+
+   ```text
+   Instagram to Eagle.exe
+   ```
+
+4. Start Eagle and keep it running. This app imports assets through the Eagle Local API.
+5. On first launch, open the Settings page and confirm:
+   - Storage parent folder
+   - Eagle Local API URL, usually `http://localhost:41595`
+   - Instagram login method
+   - Proxy mode
+6. The recommended login method is `cookies.txt`. If browser-login reading fails, switch to `cookies.txt`.
+7. On the Sync page, choose:
+   - Single Post: paste one or more `/p/`, `/reel/`, or `/tv/` URLs. One URL per line is easiest.
+   - Author Profile: paste one profile URL and choose a sync range.
+8. Choose the Eagle import location, then click Start Sync.
+
+The release package should usually contain:
+
+```text
+Instagram to Eagle/
+├── Instagram to Eagle.exe
+├── README.md
+├── config.example.json
+├── assets/
+├── tools/
+│   └── yt-dlp.exe          recommended, reduces some video download warnings
+└── _internal/
+```
+
+Notes:
+
+- `config.json` is generated when you save settings for the first time. It is not bundled in the release package.
+- `cookies.txt` is not bundled. Users must export it themselves and select it in Settings.
+- Your settings, cookies path, storage folder, and other local choices are not cleared when reopening the exe.
+- When upgrading, close the old app before running the new package.
+- A missing `yt-dlp` log message does not always mean failure; gallery-dl may try fallback URLs.
+- If logs mention Instagram login, 403, 401, or redirecting to the login page, export a fresh `cookies.txt` first.
+
+## Features
+
+- GUI Sync and Settings pages for daily use.
+- Single-post sync for `/p/`, `/reel/`, and `/tv/` URLs.
+- Author-profile sync with unlimited, recent N posts, or date-range modes.
+- Automatic Instagram URL normalization: query strings and fragments are removed.
+- Login methods: `cookies.txt`, experimental browser-cookie reading, or no-login mode.
+- Proxy modes: auto-detect system proxy, manual proxy, or no proxy.
+- Eagle folder picker inside the GUI.
+- Staging preview and manual import.
+- Duplicate prevention through `imported_state`, mapping `unique_key -> eagle_item_id`.
+- Eagle deletion verification with `--verify-eagle`.
+
+## Part 2: CLI and Developer Usage
+
+### Install
+
+The Windows `py` launcher is recommended.
+
+```powershell
+py --version
+py -m pip install -e .
+py -m gallery_dl --version
+```
+
+If `gallery-dl` reports missing `yt-dlp` or `youtube-dl` while downloading some videos, install:
+
+```powershell
+py -m pip install yt-dlp
+```
+
+Start Eagle and confirm that the Eagle Local API is available. The default URL is:
+
+```text
+http://localhost:41595
+```
+
+### GUI Usage
+
+Start the GUI:
+
+```powershell
+py -m ins_eagle_sync
+```
+
+Or:
+
+```powershell
+ins-eagle-sync-gui
+```
+
+Basic GUI flow:
+
+1. Configure storage, cache, Eagle API, cookies, proxy, and common sync options on the Settings page.
+2. Choose Single Post or Author Profile on the Sync page.
+3. Paste an Instagram URL.
+4. Choose the target Eagle folder.
+5. Start sync. The log panel shows `gallery-dl` output, warnings, errors, and import results in real time.
+
+Single Post mode only shows the options needed for posts and does not pass `max_posts` or date ranges. Author Profile mode shows sync range controls.
+
+### Getting cookies.txt
+
+Netscape-format `cookies.txt` is recommended.
+
+1. Log in to Instagram in your browser.
+2. Use a browser extension that exports Netscape cookies, such as `Get cookies.txt LOCALLY`.
+3. Export only cookies for `instagram.com`.
+4. Save the file locally, for example:
+
+   ```text
+   E:/INS_Eagle_Sync/_cache/instagram-cookies.txt
+   ```
+
+5. Set it in `config.json` or the GUI Settings page:
+
+   ```json
+   "cookies": {
+     "enabled": true,
+     "from_browser": "",
+     "file": "E:/INS_Eagle_Sync/_cache/instagram-cookies.txt"
+   }
+   ```
+
+If Instagram redirects to the login page, or you see 403 or 401 errors, the cookies are usually expired and should be exported again.
+
+### Browser Cookie Reading
+
+The GUI can read cookies from a browser, but this is experimental.
+
+Browser reading can fail because:
+
+- Chrome or Edge is still running and locking the cookies database.
+- Windows DPAPI decryption fails.
+- The selected browser profile does not match the current user.
+- The installed gallery-dl or Python version has incomplete browser-cookie support.
+
+If browser reading fails, use exported Netscape `cookies.txt`. It is the most stable method.
+
+### Proxy Modes
+
+The GUI Settings page provides three proxy modes:
+
+- Auto-detect system proxy: recommended for most users. The app reads environment variables and Windows system proxy settings.
+- Manual proxy: for known proxy ports, such as `http://127.0.0.1:10809` or `http://127.0.0.1:7890`. If only HTTP proxy is filled, it is reused for HTTPS.
+- No proxy: for networks that do not need a proxy. The app tries to clear proxy environment variables passed to gallery-dl.
+
+Example:
+
+```json
+"proxy": {
+  "mode": "auto",
+  "http_proxy": "",
+  "https_proxy": "",
+  "detected_proxy": ""
+}
+```
+
+### Eagle Folder Picker
+
+The GUI folder picker reads folder data from the Eagle Local API. It can:
+
+- Select an existing Eagle folder as the import target.
+- Search by folder name or path.
+- Expand the folder tree.
+- Write the selected folder back to the Sync page.
+
+If the picker is empty, make sure Eagle is running and the Eagle Local API URL is correct.
+
+The CLI also supports folder ID or folder path:
+
+```powershell
+py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --folder-id "YOUR_EAGLE_FOLDER_ID"
+py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --folder-path "Instagram/quinn.xyz"
+```
+
+Use only one of `--folder-id` and `--folder-path`.
+
+### Author Profile Sync Range
+
+Author Profile mode supports three ranges:
+
+- Unlimited: no `--range` is passed; gallery-dl fetches all accessible content.
+- Recent N posts: `--max-posts N` is converted to gallery-dl `--range 1-N`.
+- Date range: `--date-from` and `--date-to` generate gallery-dl date filters.
+
+CLI examples:
+
+```powershell
+py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID" --max-posts 20
+py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID" --max-posts -1
+py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID" --date-from 2026-04-01 --date-to 2026-05-01
+```
+
+`max_posts = -1` means unlimited. `max_posts = 0` or values below `-1` are invalid and produce a friendly error.
+
+In the GUI, Date Range mode uses an end date plus Day / Week / Month / Year range to calculate start and end dates. Default max posts is `-1`.
+
+### URL Normalization
+
+The app normalizes Instagram URLs before GUI sync, CLI sync, gallery-dl command generation, Eagle website fields, and `unique_key` generation.
+
+Query strings and fragments are removed:
+
+```text
+https://www.instagram.com/p/DPCujtjEowk/?img_index=1
+-> https://www.instagram.com/p/DPCujtjEowk/
+```
+
+Supported URLs:
+
+- `https://www.instagram.com/p/<shortcode>/`
+- `https://www.instagram.com/reel/<shortcode>/`
+- `https://www.instagram.com/tv/<shortcode>/`
+- `https://www.instagram.com/<username>/`
+
+This prevents the same post from generating different website fields or unique keys because of `?img_index=1`, share parameters, or fragments.
+
+### gallery-dl Warnings and Timeouts
+
+The GUI log shows `gallery-dl` stdout and stderr in real time. Warnings do not always mean failure. A download is considered failed only when `gallery-dl` exits with a non-zero code.
+
+Common warnings:
+
+- `[downloader.ytdl][error] Cannot import yt-dlp or youtube-dl`: ytdl fallback is unavailable. If the final file downloads successfully, this can be ignored. Install `yt-dlp` if needed.
+- `[download][info] Trying fallback URL #1`: gallery-dl is trying another download URL.
+- `[downloader.http][warning] IncompleteRead...`: the network connection was interrupted; gallery-dl will retry according to its own retry strategy.
+- `Read timed out`, `HTTPSConnectionPool`, or `downloader.http warning`: usually caused by Instagram CDN, network, or proxy timeouts.
+
+When a CDN timeout is detected, the GUI shows:
+
+```text
+Instagram CDN download timed out; gallery-dl is retrying. This may be network or proxy related.
+```
+
+If there is no new output for 60 seconds, the GUI says the download is still running. After 120 seconds without output, it warns that the task may be stuck. These are hints only and do not directly mark the task as failed.
+
+### CLI Usage
+
+Single-post sync:
+
+```powershell
+py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --folder-id "YOUR_EAGLE_FOLDER_ID"
+```
+
+Author sync:
+
+```powershell
+py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID" --max-posts 20
+```
+
+Dry run:
+
+```powershell
+py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --folder-id "YOUR_EAGLE_FOLDER_ID" --dry-run
+```
+
+Common options:
+
+- `--force`: ignore `imported_state` and force re-import.
+- `--verify-eagle`: check whether the Eagle item still exists and is still in the target folder before importing.
+- `--ignore-archive`: ignore the `gallery-dl` archive and allow re-download.
+- `--verbose-gallery-dl`: show more detailed `gallery-dl` logs.
+- `--show-annotation`: show annotation during dry run.
+
+### Staging Preview and Manual Import
+
+Parse a staging directory without calling Eagle API:
+
+```powershell
+py -m ins_eagle_sync.cli parse-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7hQCT90"
+```
+
+Import a staging directory into Eagle:
+
+```powershell
+py -m ins_eagle_sync.cli import-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7hQCT90" --folder-id "YOUR_EAGLE_FOLDER_ID"
+```
+
+### Packaging and Release
+
+After developer install, the GUI can be started directly:
+
+```powershell
+py -m pip install -e .
+ins-eagle-sync-gui
+```
+
+Ordinary release users do not need Python, the `py` launcher, `gallery-dl`, or `yt-dlp`. The release package uses PyInstaller one-folder mode, and users start the GUI by double-clicking the exe.
+
+Developer packaging command:
+
+```powershell
+py -m pip install -U pyinstaller
+.\scripts\build_exe.ps1
+```
+
+Build output:
+
+```text
+dist/Instagram to Eagle/
+```
+
+Recommended release package structure:
+
+```text
+dist/
+└── Instagram to Eagle/
+    ├── Instagram to Eagle.exe
+    ├── README.md
+    ├── config.example.json
+    ├── assets/
+    │   └── app_icon.ico
+    ├── tools/
+    │   ├── gallery-dl.exe  # optional
+    │   └── yt-dlp.exe      # recommended
+    └── _internal/
+```
+
+By default, packaging collects the `gallery_dl` Python package into the main app. A release for users without Python should include at least:
+
+- `Instagram to Eagle.exe`
+- `README.md`
+- `config.example.json`
+
+`gallery-dl.exe` is optional. To override the bundled module version or temporarily use a specific version, put an external executable at `tools/gallery-dl.exe`. `yt-dlp.exe` is recommended to reduce `Cannot import yt-dlp or youtube-dl` warnings for some video downloads. Missing `yt-dlp` does not necessarily make sync fail because gallery-dl may continue with fallback URLs.
+
+The packaging script copies:
+
+- `README.md`
+- `config.example.json`
+- `assets/`
+- `tools/gallery-dl.exe`, if present
+- `tools/yt-dlp.exe`, if present
+
+The packaging script does not copy:
+
+- `config.json`
+- `cookies.txt`
+- `_cache/`
+- `_staging/`
+- `.pytest_cache/`
+- `__pycache__/`
+
+The default packaging flow bundles the `gallery_dl` package from the current Python environment and requires version `1.32.1` or newer. Tool executables can be specified explicitly:
+
+```powershell
+.\scripts\build_exe.ps1 -GalleryDlExePath "C:\path\to\gallery-dl.exe" -YtDlpExePath "C:\path\to\yt-dlp.exe"
+```
+
+Without arguments, the script does not copy `tools/gallery-dl.exe`; it uses the bundled `gallery_dl` module instead, avoiding old external executables overriding a newer module. External `gallery-dl.exe` is copied only when `-GalleryDlExePath` is provided or `-IncludeExternalGalleryDl` is used. `yt-dlp.exe` is loaded first from `tools/yt-dlp.exe`, then from PATH.
+
+If `gallery-dl.exe` is missing, the script prints an optional warning and the packaged app uses the bundled `gallery_dl` module. If `yt-dlp.exe` is missing, the script prints an optional warning.
+
+Runtime `gallery-dl` lookup order:
+
+1. Explicit `gallery_dl_executable` in config
+2. Packaged environment: `tools/gallery-dl.exe`
+3. Packaged environment: `gallery-dl.exe`
+4. Packaged environment fallback: bundled `gallery_dl` Python module
+5. Development environment: `tools/gallery-dl.exe`
+6. Development environment: `gallery-dl.exe`
+7. Development environment fallback: `py -m gallery_dl`
+
+The packaged app does not fall back to the user's system `py -m gallery_dl`, so ordinary users still do not need Python or gallery-dl.
+
+Runtime `yt-dlp` lookup order:
+
+1. Explicit `yt_dlp_executable` in config
+2. Packaged environment: `tools/yt-dlp.exe`
+3. Packaged environment: `yt-dlp.exe`
+4. Development environment: `tools/yt-dlp.exe`
+5. Development environment: `yt-dlp.exe`
+6. Development environment fallback: `py -m yt_dlp`
+
+If `yt-dlp` is unavailable in the packaged app, the tool only shows a warning and does not directly mark the task as failed.
+
+After packaging, still prepare or confirm:
+
+- Writable `_cache` and `_staging` directories
+- Valid `cookies.txt`
+- Eagle is running
+
+`cookies.txt` is not bundled. Users select it from the GUI Settings page. `config.json` is generated when users save settings for the first time; settings are not written into the exe. As long as `config.json` is kept during upgrades, cookies path, storage path, proxy, and Eagle folder settings remain. Deleting `config.json`, or running from a new directory without it, recreates default configuration.
+
+GUI startup checks show whether the app is running in development or packaged mode, and whether `gallery-dl` / `yt-dlp` is available. If `tools/gallery-dl.exe` exists, the GUI reports the bundled exe. If there is no exe but PyInstaller collected the module correctly, it reports the bundled `gallery-dl Python module`.
+
+### App Icon
+
+Icon file:
+
+```text
+assets/app_icon.ico
+```
+
+To regenerate the ico from PNG, place `assets/app_icon.png`, or use the existing `assets/icon.png`, then run:
+
+```powershell
+py scripts/make_icon.py
+```
+
+The generated ico includes 16, 24, 32, 48, 64, 128, and 256 sizes. PyInstaller uses `assets/app_icon.ico` as the exe icon, and the GUI uses it as the window icon.
+
+### Build and Upload Helper
+
+The repository includes a helper bat file:
+
+```bat
+build_and_upload_github.bat
+```
+
+It runs tests, builds the exe package, optionally commits local changes, and pushes the current branch to GitHub. Extra arguments are forwarded to `scripts\build_exe.ps1`:
+
+```bat
+build_and_upload_github.bat -ForceCloseRunningApp
+```
+
+### FAQ
+
+#### The UI does not open
+
+Run it from a terminal to see the error:
+
+```powershell
+py -m ins_eagle_sync
+```
+
+If dependencies are missing, reinstall:
+
+```powershell
+py -m pip install -e .
+```
+
+#### Cookies expired
+
+If you see login redirects, 401, 403, or empty results, export a fresh Instagram `cookies.txt` and confirm that `cookies.enabled` is `true` and `cookies.file` points to the correct path.
+
+#### Browser cookies Permission denied
+
+Close the browser and try again. If it still fails, use Netscape `cookies.txt`.
+
+#### Proxy does not work
+
+Confirm that the proxy app is running and that the port matches the GUI setting. If auto-detect is unstable, use manual proxy. If no proxy is needed, choose No proxy.
+
+#### gallery-dl succeeds but imports 0 files
+
+Common causes:
+
+- The URL or author profile has no accessible content.
+- Expired cookies returned empty results.
+- The selected date range is too narrow.
+- `gallery-dl` archive already recorded old downloads, so there are no new files.
+- The staging directory has no metadata JSON.
+
+Try narrowing the range, refreshing cookies, using `--ignore-archive`, or checking the GUI real-time log.
+
+#### Eagle item was deleted but sync still skips it
+
+Use folder-aware verification:
+
+```powershell
+py -m ins_eagle_sync.cli verify-imports --shortcode DYld7hQCT90 --folder-id "YOUR_EAGLE_FOLDER_ID" --dry-run
+py -m ins_eagle_sync.cli import-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7hQCT90" --folder-id "YOUR_EAGLE_FOLDER_ID" --verify-eagle
+```
+
+#### gallery-dl archive prevents re-download
+
+Use `--ignore-archive`:
+
+```powershell
+py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --folder-id "YOUR_EAGLE_FOLDER_ID" --ignore-archive
+```
+
+### Do Not Commit These Files
+
+Do not commit files containing accounts, cookies, or local runtime data:
+
+- `cookies.txt`
+- `config.json`
+- `_cache/`
+- `_staging/`
+- `tools/*.exe`
+- `tools/gallery-dl.exe`
+- `tools/yt-dlp.exe`
+- `eagle-imported.json`
+- `gallery-dl-archive.sqlite3`
+- `*.spec`
+
+Check the worktree:
+
+```powershell
+git status --short
+```
+
+### Development
+
+Run tests:
+
+```powershell
+py -m pytest -q
+```
+
+Or:
+
+```powershell
+.\scripts\run_dev.ps1
+```
+
+## 中文文档
+
 ### Instagram to Eagle用于批量下载Instagram帖子并自动导入Eagle，生成备注和链接。
 
 这是一个 Windows 优先的 Python 工具，用 `gallery-dl` 下载 Instagram 内容到本地 staging 目录，再读取 metadata JSON，通过 Eagle Local API 导入 Eagle。
 
 项目提供 GUI 和 CLI 两种入口。下载文件只会进入配置的 staging 目录，不会直接写入 Eagle 资源库。
 
-# Part 1 客户端使用说明
+### Part 1 客户端使用说明
 
 如果你只是使用已经打包好的 Windows 版本，不需要安装 Python、`gallery-dl` 或 `yt-dlp`。
 
@@ -55,7 +581,7 @@ Instagram to Eagle/
 - 如果日志提示 `yt-dlp` 缺失，通常不一定代表失败；gallery-dl 会尝试备用下载方式。
 - 如果日志提示 Instagram 登录、403、401 或跳转登录页，优先重新导出 `cookies.txt`。
 
-## 功能概览
+### 功能概览
 
 - GUI 同步页和设置页，适合日常使用。
 - 单帖同步：支持 `/p/`、`/reel/`、`/tv/` 链接。
@@ -68,8 +594,8 @@ Instagram to Eagle/
 - 去重：用 `imported_state` 记录 `unique_key -> eagle_item_id`。
 - Eagle 删除校验：用 `--verify-eagle` 检查 Eagle item 是否仍存在且仍属于目标文件夹。
 
-# Part 2 CLI使用说明
-## 安装
+### Part 2 CLI使用说明
+#### 安装
 
 建议使用 Windows 的 `py` 启动器。
 
@@ -91,7 +617,7 @@ py -m pip install yt-dlp
 http://localhost:41595
 ```
 
-## GUI 使用
+#### GUI 使用
 
 启动 GUI：
 
@@ -115,7 +641,7 @@ GUI 的基本流程：
 
 单个帖子模式只显示单帖需要的参数，不会传 `max_posts` 或时间范围。作者主页模式会显示同步范围参数。
 
-## cookies.txt 获取方法
+#### cookies.txt 获取方法
 
 推荐使用 Netscape 格式的 `cookies.txt`。常见方式：
 
@@ -140,7 +666,7 @@ GUI 的基本流程：
 
 如果看到 Instagram 跳转登录页、403、401，通常是 cookies 失效，需要重新导出。
 
-## 浏览器读取 cookies
+#### 浏览器读取 cookies
 
 GUI 支持从浏览器读取 cookies，但这是实验性功能。
 
@@ -153,7 +679,7 @@ GUI 支持从浏览器读取 cookies，但这是实验性功能。
 
 如果浏览器读取失败，优先改用导出的 Netscape `cookies.txt`。这是最稳定的方式。
 
-## 代理模式
+#### 代理模式
 
 GUI 设置页提供三种代理模式：
 
@@ -172,7 +698,7 @@ GUI 设置页提供三种代理模式：
 }
 ```
 
-## Eagle 文件夹选择器
+#### Eagle 文件夹选择器
 
 GUI 的 Eagle 文件夹选择器会从 Eagle Local API 读取文件夹列表。可以：
 
@@ -192,7 +718,7 @@ py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --
 
 `--folder-id` 和 `--folder-path` 只能二选一。
 
-## 作者主页同步范围
+#### 作者主页同步范围
 
 作者主页模式支持三种范围：
 
@@ -212,7 +738,7 @@ py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --fo
 
 GUI 中“按时间范围”使用结束日期和“天 / 周 / 月 / 年”范围计算起止日期；“最多同步帖子数”默认是 `-1`。
 
-## URL 自动规范化
+#### URL 自动规范化
 
 程序会在 GUI、CLI、gallery-dl 命令、Eagle website 字段和 `unique_key` 生成前统一规范化 Instagram URL。
 
@@ -232,7 +758,7 @@ https://www.instagram.com/p/DPCujtjEowk/?img_index=1
 
 这样可以避免同一个帖子因为 `?img_index=1`、分享参数或 fragment 不同而生成不同的 website / unique key。
 
-## gallery-dl warning 和 timeout
+#### gallery-dl warning 和 timeout
 
 GUI 日志会实时显示 `gallery-dl` 的 stdout / stderr。warning 不等于失败，只有 `gallery-dl` exit code 非 0 才会判定下载失败。
 
@@ -251,7 +777,7 @@ Instagram CDN 下载超时，gallery-dl 正在重试，可能与网络或代理�
 
 如果 60 秒没有新输出，GUI 会提示“下载仍在进行”；120 秒没有输出会提示“可能卡住”。这只是提示，不会直接判定失败。
 
-## CLI 使用
+#### CLI 使用
 
 单帖同步：
 
@@ -279,7 +805,7 @@ py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --
 - `--verbose-gallery-dl`：显示更详细的 `gallery-dl` 日志。
 - `--show-annotation`：dry-run 时显示 annotation。
 
-## staging 预览和手动导入
+#### staging 预览和手动导入
 
 只解析 staging 目录，不调用 Eagle API：
 
@@ -293,7 +819,7 @@ py -m ins_eagle_sync.cli parse-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7
 py -m ins_eagle_sync.cli import-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7hQCT90" --folder-id "YOUR_EAGLE_FOLDER_ID"
 ```
 
-## 打包与发布
+#### 打包与发布
 
 开发安装后可直接运行：
 
@@ -401,7 +927,21 @@ dist/
 
 GUI 启动检查会显示当前是开发环境还是已打包运行，并提示 `gallery-dl` / `yt-dlp` 是否可用。如果存在 `tools/gallery-dl.exe`，会显示已找到内置 exe；如果没有 exe 但 PyInstaller 已正确收集模块，会显示已内置 `gallery-dl Python 模块`。
 
-## 应用图标
+#### 一键打包并上传 GitHub
+
+项目根目录提供辅助 bat：
+
+```bat
+build_and_upload_github.bat
+```
+
+它会依次运行测试、打包 exe、按需提交本地改动，并把当前分支推送到 GitHub。额外参数会转发给 `scripts\build_exe.ps1`：
+
+```bat
+build_and_upload_github.bat -ForceCloseRunningApp
+```
+
+#### 应用图标
 
 图标文件位于：
 
@@ -417,9 +957,9 @@ py scripts/make_icon.py
 
 生成的 ico 包含 16、24、32、48、64、128、256 多尺寸。PyInstaller 打包时会使用 `assets/app_icon.ico` 作为 exe 图标，GUI 运行时也会用它作为窗口图标。
 
-## 常见问题
+#### 常见问题
 
-### UI 打不开
+##### UI 打不开
 
 先在终端运行，查看具体报错：
 
@@ -433,19 +973,19 @@ py -m ins_eagle_sync
 py -m pip install -e .
 ```
 
-### cookies 失效
+##### cookies 失效
 
 看到登录跳转、401、403 或抓不到内容时，重新导出 Instagram `cookies.txt`，并确认 `cookies.enabled` 为 `true`，`cookies.file` 指向正确路径。
 
-### 浏览器 cookies Permission denied
+##### 浏览器 cookies Permission denied
 
 关闭浏览器后重试。如果仍失败，改用 Netscape `cookies.txt`。
 
-### 代理不生效
+##### 代理不生效
 
 确认代理软件正在运行，端口和 GUI 里填写的一致。自动检测不稳定时，改用手动代理。无需代理时选择“不使用代理”。
 
-### gallery-dl 成功但导入 0 个文件
+##### gallery-dl 成功但导入 0 个文件
 
 常见原因：
 
@@ -457,7 +997,7 @@ py -m pip install -e .
 
 可以尝试缩小范围、更新 cookies、使用 `--ignore-archive`，或查看 GUI 实时日志。
 
-### Eagle 已删除但仍 skipped
+##### Eagle 已删除但仍 skipped
 
 使用 folder-aware 校验：
 
@@ -466,7 +1006,7 @@ py -m ins_eagle_sync.cli verify-imports --shortcode DYld7hQCT90 --folder-id "YOU
 py -m ins_eagle_sync.cli import-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld7hQCT90" --folder-id "YOUR_EAGLE_FOLDER_ID" --verify-eagle
 ```
 
-### gallery-dl archive 导致不重新下载
+##### gallery-dl archive 导致不重新下载
 
 使用 `--ignore-archive`：
 
@@ -474,7 +1014,7 @@ py -m ins_eagle_sync.cli import-staging "E:\INS_Eagle_Sync\_staging\unknown\DYld
 py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --folder-id "YOUR_EAGLE_FOLDER_ID" --ignore-archive
 ```
 
-## 不要提交这些文件
+#### 不要提交这些文件
 
 不要提交包含账号、cookies 或本地运行数据的文件：
 
@@ -495,7 +1035,7 @@ py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --
 git status --short
 ```
 
-## 开发
+#### 开发
 
 运行测试：
 
