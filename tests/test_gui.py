@@ -848,6 +848,68 @@ def test_login_check_no_login_mode_omits_cookie_args(project_tmp_path) -> None:
     assert "--cookies-from-browser" not in command
 
 
+def test_cookie_setup_guide_shows_for_no_login_mode(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    data = gui.apply_login_settings(
+        gui.default_config_data(),
+        method=gui.LOGIN_NONE,
+        browser_label="Chrome",
+        profile="Default",
+        cookie_file="",
+    )
+    gui.write_config_data(data, config_path)
+    config = load_config(config_path)
+
+    assert gui.should_show_cookie_setup_guide(config)
+
+
+def test_cookie_setup_guide_shows_when_cookie_file_missing(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    data = gui.apply_login_settings(
+        gui.default_config_data(),
+        method=gui.LOGIN_COOKIE_FILE,
+        browser_label="Chrome",
+        profile="Default",
+        cookie_file=str(project_tmp_path / "missing-cookies.txt"),
+    )
+    gui.write_config_data(data, config_path)
+    config = load_config(config_path)
+
+    assert gui.should_show_cookie_setup_guide(config)
+
+
+def test_cookie_setup_guide_hides_for_existing_cookie_file(project_tmp_path) -> None:
+    cookie_path = project_tmp_path / "instagram-cookies.txt"
+    cookie_path.write_text("# Netscape HTTP Cookie File", encoding="utf-8")
+    config_path = project_tmp_path / "config.json"
+    data = gui.apply_login_settings(
+        gui.default_config_data(),
+        method=gui.LOGIN_COOKIE_FILE,
+        browser_label="Chrome",
+        profile="Default",
+        cookie_file=str(cookie_path),
+    )
+    gui.write_config_data(data, config_path)
+    config = load_config(config_path)
+
+    assert not gui.should_show_cookie_setup_guide(config)
+
+
+def test_cookie_setup_guide_hides_for_browser_login_choice(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    data = gui.apply_login_settings(
+        gui.default_config_data(),
+        method=gui.LOGIN_BROWSER,
+        browser_label="Chrome",
+        profile="Default",
+        cookie_file="",
+    )
+    gui.write_config_data(data, config_path)
+    config = load_config(config_path)
+
+    assert not gui.should_show_cookie_setup_guide(config)
+
+
 def test_login_check_browser_command_log_hides_profile(project_tmp_path) -> None:
     config_path = project_tmp_path / "config.json"
     data = gui.apply_login_settings(

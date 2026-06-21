@@ -106,6 +106,8 @@ STATUS_FAILED = "失败"
 STATUS_CANCELLED = "已停止"
 LOG_PANEL_TITLE = "运行日志"
 SHOW_BROWSER_COOKIE_HELP = "__SHOW_BROWSER_COOKIE_HELP__"
+COOKIE_SETUP_GUIDE_TITLE = "建议先配置 Instagram cookies.txt"
+COOKIE_SETUP_GUIDE_BODY = "cookies.txt 是当前最稳定的登录方式。配置后可减少登录跳转、403/401 和公开内容抓取不完整的问题。"
 FOLDER_DISPLAY_ICON = ""
 FOLDER_ROW_HEIGHT = 34
 FOLDER_INDENT = 24
@@ -269,12 +271,13 @@ class InsEagleSyncApp(_BaseWindow):
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=0, minsize=LOG_PANEL_WIDTH)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
         self._build_header()
+        self._build_cookie_setup_guide()
 
         self.main_panel = ctk.CTkFrame(self, fg_color="transparent")
-        self.main_panel.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=(0, 10))
+        self.main_panel.grid(row=2, column=0, sticky="nsew", padx=(12, 6), pady=(0, 10))
         self.main_panel.grid_columnconfigure(0, weight=1)
         self.main_panel.grid_rowconfigure(0, weight=1)
 
@@ -314,7 +317,7 @@ class InsEagleSyncApp(_BaseWindow):
 
     def _build_status_bar(self) -> None:
         status_bar = ctk.CTkFrame(self, corner_radius=0)
-        status_bar.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
+        status_bar.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
         status_bar.grid_columnconfigure(2, weight=1)
         status_bar.configure(fg_color=COLORS["surface"], border_width=1, border_color=COLORS["border_soft"])
         ctk.CTkLabel(status_bar, text="状态：", text_color=COLORS["text_muted"], font=FONTS["body"]).grid(
@@ -327,6 +330,57 @@ class InsEagleSyncApp(_BaseWindow):
         self.status_dot.grid(row=0, column=2, padx=(0, 12), pady=6, sticky="w")
         self.toggle_log_button = self._button(status_bar, "隐藏日志", self.toggle_log_panel, kind="ghost", width=96, height=26)
         self.toggle_log_button.grid(row=0, column=3, padx=10, pady=4, sticky="e")
+
+    def _build_cookie_setup_guide(self) -> None:
+        self.cookie_setup_guide = ctk.CTkFrame(
+            self,
+            fg_color=COLORS["surface_2"],
+            corner_radius=RADIUS["card"],
+            border_width=1,
+            border_color=COLORS["warning"],
+        )
+        self.cookie_setup_guide.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 10))
+        self.cookie_setup_guide.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            self.cookie_setup_guide,
+            text="!",
+            text_color=COLORS["warning"],
+            font=(FONTS["section"][0], 18, "bold"),
+        ).grid(row=0, column=0, rowspan=2, padx=(SPACE["lg"], SPACE["sm"]), pady=SPACE["md"], sticky="n")
+        ctk.CTkLabel(
+            self.cookie_setup_guide,
+            text=COOKIE_SETUP_GUIDE_TITLE,
+            text_color=COLORS["text"],
+            font=FONTS["section"],
+        ).grid(row=0, column=1, padx=(0, SPACE["md"]), pady=(SPACE["md"], 2), sticky="w")
+        ctk.CTkLabel(
+            self.cookie_setup_guide,
+            text=COOKIE_SETUP_GUIDE_BODY,
+            text_color=COLORS["text_muted"],
+            font=FONTS["small"],
+        ).grid(row=1, column=1, padx=(0, SPACE["md"]), pady=(0, SPACE["md"]), sticky="w")
+        self._button(
+            self.cookie_setup_guide,
+            "去设置 cookies.txt",
+            self.open_cookie_setup_guide,
+            kind="primary",
+            width=142,
+        ).grid(row=0, column=2, rowspan=2, padx=(0, SPACE["sm"]), pady=SPACE["md"], sticky="e")
+        self._button(
+            self.cookie_setup_guide,
+            "获取说明",
+            self.show_cookie_help,
+            kind="secondary",
+            width=96,
+        ).grid(row=0, column=3, rowspan=2, padx=(0, SPACE["sm"]), pady=SPACE["md"], sticky="e")
+        self._button(
+            self.cookie_setup_guide,
+            "关闭",
+            self.dismiss_cookie_setup_guide,
+            kind="ghost",
+            width=72,
+        ).grid(row=0, column=4, rowspan=2, padx=(0, SPACE["lg"]), pady=SPACE["md"], sticky="e")
+        self._update_cookie_setup_guide()
 
     def _build_header(self) -> None:
         header = ctk.CTkFrame(
@@ -394,6 +448,25 @@ class InsEagleSyncApp(_BaseWindow):
         else:
             self.settings_tab.grid_remove()
             self.sync_tab.grid()
+
+    def open_cookie_setup_guide(self) -> None:
+        self.nav_tabs.set(SETTINGS_TAB_NAME)
+        self._show_main_tab(SETTINGS_TAB_NAME)
+        self.login_method.set(LOGIN_COOKIE_FILE)
+        self._login_method_changed(LOGIN_COOKIE_FILE)
+        self._scroll_settings_to_section("instagram")
+
+    def dismiss_cookie_setup_guide(self) -> None:
+        self.cookie_setup_guide.grid_remove()
+
+    def _update_cookie_setup_guide(self) -> None:
+        guide = getattr(self, "cookie_setup_guide", None)
+        if guide is None:
+            return
+        if should_show_cookie_setup_guide(self.config):
+            guide.grid()
+        else:
+            guide.grid_remove()
 
     def _on_root_configure(self, event: object) -> None:
         if getattr(event, "widget", None) is not self:
@@ -484,7 +557,7 @@ class InsEagleSyncApp(_BaseWindow):
             border_width=1,
             border_color=COLORS["border"],
         )
-        self.log_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 12), pady=(0, 10))
+        self.log_panel.grid(row=2, column=1, sticky="nsew", padx=(6, 12), pady=(0, 10))
         self.log_panel.grid_columnconfigure(0, weight=1)
         self.log_panel.grid_rowconfigure(1, weight=1)
 
@@ -1385,6 +1458,7 @@ class InsEagleSyncApp(_BaseWindow):
             self._sync_mode_changed()
             self._append_log("设置已保存到 config.json。")
             self._warn_about_cookies()
+            self._update_cookie_setup_guide()
         except Exception as exc:  # noqa: BLE001 - user-facing GUI error.
             self._append_log(f"错误：保存设置失败：{exc}")
 
@@ -1399,6 +1473,7 @@ class InsEagleSyncApp(_BaseWindow):
             self._set_entry(self.folder_path_entry, sync_folder["folder_path"])
             self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
             self._sync_mode_changed()
+            self._update_cookie_setup_guide()
             self._append_log(f"设置已重新加载：{self.config_path}")
         except Exception as exc:  # noqa: BLE001 - user-facing GUI error.
             self._append_log(f"错误：重新加载设置失败：{exc}")
@@ -2675,6 +2750,14 @@ def get_login_form_values(data: dict[str, Any]) -> tuple[str, str, str]:
         return LOGIN_BROWSER, browser_label_from_value(browser_value), profile
 
     return LOGIN_COOKIE_FILE, "Chrome", "Default"
+
+
+def should_show_cookie_setup_guide(config: AppConfig) -> bool:
+    if not config.cookies.enabled:
+        return True
+    if config.cookies.from_browser:
+        return False
+    return config.cookies.file is None or not config.cookies.file.exists()
 
 
 def apply_login_settings(
