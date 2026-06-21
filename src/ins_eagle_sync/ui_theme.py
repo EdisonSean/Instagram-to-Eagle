@@ -1,5 +1,5 @@
 APP_TITLE = "Instagram to Eagle"
-FONT_FAMILY = "PingFang SC"
+FONT_FAMILY = ".PingFang SC Regular"
 
 COLORS = {
     "window": "#18191B",
