@@ -461,6 +461,21 @@ def test_default_max_posts_is_unlimited() -> None:
     assert gui.default_config_data()["download"]["max_posts"] == -1
 
 
+def test_default_language_is_chinese() -> None:
+    assert gui.default_config_data()["language"] == gui.LANGUAGE_ZH
+    assert gui.normalize_language("en") == gui.LANGUAGE_EN
+    assert gui.normalize_language("bad") == gui.LANGUAGE_ZH
+
+
+def test_english_display_values_map_back_to_chinese_internal_values() -> None:
+    app = object.__new__(gui.InsEagleSyncApp)
+    app.language = gui.LANGUAGE_EN
+
+    assert gui.InsEagleSyncApp._tr(app, gui.SYNC_TAB_NAME) == "Sync"
+    assert gui.InsEagleSyncApp._to_zh(app, "Sync") == gui.SYNC_TAB_NAME
+    assert gui.InsEagleSyncApp._to_zh(app, "Author Profile") == gui.MODE_AUTHOR
+
+
 def test_sync_mode_hides_author_slot_in_post_mode() -> None:
     app = object.__new__(gui.InsEagleSyncApp)
     app.author_options_slot = FakeFrame()

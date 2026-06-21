@@ -127,6 +127,10 @@ SETTINGS_SCROLL_TOP_PADDING = 36
 RESIZE_IDLE_DEBOUNCE_MS = 220
 LOG_FLUSH_RESIZE_DELAY_MS = 180
 LOG_PANEL_WIDTH = 430
+LANGUAGE_ZH = "zh"
+LANGUAGE_EN = "en"
+LANGUAGE_LABELS = {LANGUAGE_ZH: "中文", LANGUAGE_EN: "English"}
+LANGUAGE_TOGGLE_LABELS = {LANGUAGE_ZH: "English", LANGUAGE_EN: "中文"}
 SETTINGS_SECTION_FLASH_STEPS = (
     (0, "primary_soft"),
     (120, "primary"),
@@ -135,7 +139,114 @@ SETTINGS_SECTION_FLASH_STEPS = (
     (620, "primary_soft"),
 )
 
+EN_TEXT: dict[str, str] = {
+    SYNC_TAB_NAME: "Sync",
+    SETTINGS_TAB_NAME: "Settings",
+    MODE_POST: "Single Post",
+    MODE_AUTHOR: "Author Profile",
+    LOGIN_COOKIE_FILE: "Use cookies.txt file (recommended, stable)",
+    LOGIN_BROWSER: "Read login from browser (experimental)",
+    LOGIN_NONE: "No login, public content only",
+    PROXY_AUTO: "Auto-detect system proxy (recommended)",
+    PROXY_MANUAL: "Manual proxy",
+    PROXY_NONE: "No proxy",
+    DATE_RANGE_DAY: "Day",
+    DATE_RANGE_WEEK: "Week",
+    DATE_RANGE_MONTH: "Month",
+    DATE_RANGE_YEAR: "Year",
+    AUTHOR_SYNC_UNLIMITED: "Unlimited",
+    AUTHOR_SYNC_RECENT: "Recent N posts",
+    AUTHOR_SYNC_DATE_RANGE: "Date range",
+    STATUS_READY: "Ready",
+    STATUS_RUNNING: "Running",
+    STATUS_DONE: "Done",
+    STATUS_FAILED: "Failed",
+    STATUS_CANCELLED: "Cancelled",
+    LOG_PANEL_TITLE: "Run Log",
+    COOKIE_SETUP_GUIDE_TITLE: "Set up Instagram cookies.txt first",
+    COOKIE_SETUP_GUIDE_BODY: "cookies.txt is currently the most stable login method. It reduces login redirects, 403/401 errors, and incomplete public-content captures.",
+    "状态：": "Status:",
+    "隐藏日志": "Hide Log",
+    "显示日志": "Show Log",
+    "清空": "Clear",
+    "复制": "Copy",
+    "关闭": "Close",
+    "去设置 cookies.txt": "Set cookies.txt",
+    "获取说明": "Guide",
+    "1. 导入位置": "1. Import Location",
+    "Eagle 导入位置": "Eagle import location",
+    "选择 Eagle 文件夹": "Choose Eagle Folder",
+    "2. 开始同步": "2. Start Sync",
+    "开始同步": "Start Sync",
+    "正在运行...": "Running...",
+    "停止": "Stop",
+    "预览": "Preview",
+    "检查 Eagle 文件夹": "Check Eagle Folder",
+    "打开缓存目录": "Open Cache Folder",
+    "打开配置目录": "Open Config Folder",
+    "打开说明": "Open Guide",
+    "3. 来源": "3. Source",
+    "Instagram 链接": "Instagram URL",
+    "单帖模式可粘贴多个帖子 / Reel / TV 链接：一行一个，也支持空格、逗号分隔。作者主页模式只填一个作者主页链接。": "Single-post mode accepts multiple Post / Reel / TV links: one per line, or separated by spaces and commas. Author mode accepts one profile URL.",
+    "同步类型": "Sync Type",
+    "作者同步范围": "Author Sync Range",
+    "最多同步帖子数": "Max posts",
+    "仅在“最近 N 条”模式下生效。": "Only applies in Recent N posts mode.",
+    "开始日期": "Start Date",
+    "范围": "Range",
+    "设置中心": "Settings",
+    "管理登录方式、存储路径、网络连接及应用行为设置。": "Manage login, storage paths, network connection, and app behavior.",
+    "1. Instagram 登录方式": "1. Instagram Login",
+    "cookies.txt 文件方式推荐且稳定；浏览器读取可能因 Cookie 加密、Profile 不匹配或浏览器未关闭而失败；不登录模式只适合部分公开内容。": "cookies.txt is recommended and stable. Browser reading can fail because of cookie encryption, profile mismatch, or an open browser. No-login mode only works for some public content.",
+    "浏览器选择": "Browser",
+    "读取前请关闭对应浏览器，否则可能失败。": "Close the selected browser before reading cookies.",
+    "Instagram 登录 Cookie 文件（备用）": "Instagram cookie file (fallback)",
+    "选择文件": "Choose File",
+    "如何获取 cookies.txt？": "How to get cookies.txt?",
+    "cookies 文件相当于临时登录凭证，请勿分享。": "Cookie files act like temporary login credentials. Do not share them.",
+    "测试 Instagram 登录状态": "Test Instagram Login",
+    "2. 下载与缓存路径": "2. Download and Cache Paths",
+    "存储下载文件的父级文件夹": "Storage parent folder",
+    "选择文件夹": "Choose Folder",
+    "3. 连接与默认值": "3. Connection and Defaults",
+    "Eagle 本地 API 地址": "Eagle Local API URL",
+    "请求间隔": "Request interval",
+    "默认 Eagle 导入位置": "Default Eagle import location",
+    "选择": "Choose",
+    "作者主页默认最多同步帖子数": "Default max author posts",
+    "代理设置": "Proxy Settings",
+    "自动读取 Windows 或环境变量中的代理设置，适合大多数用户。": "Automatically reads Windows or environment proxy settings. Best for most users.",
+    "如果你知道自己的代理地址，可以手动填写，例如 http://127.0.0.1:10809。": "Enter a proxy manually if you know it, for example http://127.0.0.1:10809.",
+    "HTTP 代理": "HTTP Proxy",
+    "HTTPS 代理": "HTTPS Proxy",
+    "直接连接网络，适合无需代理的网络环境。": "Connect directly. Use this when no proxy is needed.",
+    "将自动使用以下路径": "The following paths will be used automatically",
+    "4. 常用选项": "4. Common Options",
+    "同步前检查 Eagle 中是否已存在": "Check Eagle before importing",
+    "避免重复导入，删除后可重新补导入。": "Avoid duplicate imports. Deleted items can be re-imported.",
+    "仅预览，不实际导入": "Preview only, do not import",
+    "只显示将要执行的内容。": "Only show what would run.",
+    "5. 高级选项": "5. Advanced Options",
+    "忽略下载记录，重新下载": "Ignore download history",
+    "即使以前下载过，也重新下载。": "Download again even if already downloaded.",
+    "强制重新导入": "Force re-import",
+    "忽略已导入记录，可能产生重复素材。": "Ignore imported history. This may create duplicates.",
+    "显示详细注释": "Show detailed notes",
+    "在日志中显示将写入 Eagle 的完整注释。": "Show full Eagle annotation text in the log.",
+    "重新加载": "Reload",
+    "保存设置": "Save Settings",
+    "选择 Eagle 导入位置": "Choose Eagle Import Location",
+    "搜索文件夹...": "Search folders...",
+    "正在读取 Eagle 文件夹...": "Loading Eagle folders...",
+    "刷新": "Refresh",
+    "取消": "Cancel",
+    "选择此文件夹": "Select This Folder",
+    "未设置": "Not set",
+}
+ZH_TEXT = {value: key for key, value in EN_TEXT.items()}
+
 DEFAULT_CONFIG_DATA: dict[str, Any] = {
+    "language": LANGUAGE_ZH,
     "gallery_dl_executable": "py -m gallery_dl",
     "yt_dlp_executable": "",
     STORAGE_PARENT_KEY: "",
@@ -221,6 +332,7 @@ def show_centered_message(parent: Any, kind: str, title: str, message: str) -> N
 class InsEagleSyncApp(_BaseWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.language = LANGUAGE_ZH
         self.title(APP_TITLE)
         self.geometry("1500x900")
         self.minsize(1440, 800)
@@ -266,6 +378,8 @@ class InsEagleSyncApp(_BaseWindow):
             show_centered_warning(self, "配置文件不可用", str(exc))
             raise
         self.config_data = load_config_data(self.config_path)
+        self.language = normalize_language(self.config_data.get("language"))
+        self.config_data["language"] = self.language
         self.config = self._load_config()
 
         self._build_layout()
@@ -273,6 +387,15 @@ class InsEagleSyncApp(_BaseWindow):
         self.bind("<Configure>", self._on_root_configure, add="+")
         self.after(LOG_FLUSH_INTERVAL_MS, self._drain_log_queue)
         self.after(250, self.startup_checks)
+
+    def _tr(self, text: str) -> str:
+        return EN_TEXT.get(text, text) if self.__dict__.get("language", LANGUAGE_ZH) == LANGUAGE_EN else text
+
+    def _to_zh(self, text: str) -> str:
+        return ZH_TEXT.get(text, text)
+
+    def _localized_values(self, values: tuple[str, ...] | list[str]) -> list[str]:
+        return [self._tr(value) for value in values]
 
     def _build_layout(self) -> None:
         self.grid_columnconfigure(0, weight=1)
@@ -307,6 +430,7 @@ class InsEagleSyncApp(_BaseWindow):
         self._build_log_panel()
         self._build_status_bar()
         self._update_cookie_setup_guide()
+        self._apply_language()
 
     def _set_window_icon(self) -> None:
         icon_path = get_resource_path(APP_ICON_RELATIVE_PATH)
@@ -417,6 +541,15 @@ class InsEagleSyncApp(_BaseWindow):
         )
         self.nav_tabs.grid(row=0, column=1, pady=10)
         self.nav_tabs.set(SYNC_TAB_NAME)
+        self.language_button = self._button(
+            header,
+            LANGUAGE_TOGGLE_LABELS[self.language],
+            self.toggle_language,
+            kind="ghost",
+            width=96,
+            height=34,
+        )
+        self.language_button.grid(row=0, column=2, padx=(SPACE["md"], SPACE["lg"]), pady=10, sticky="e")
 
     def _bind_scrollable_frame_mousewheel(self, frame: Any) -> None:
         canvas = getattr(frame, "_parent_canvas", None)
@@ -451,6 +584,7 @@ class InsEagleSyncApp(_BaseWindow):
             self._bind_mousewheel_to_children(child, callback)
 
     def _show_main_tab(self, value: str) -> None:
+        value = self._to_zh(value)
         if value == SETTINGS_TAB_NAME:
             self.sync_tab.grid_remove()
             self.settings_tab.grid()
@@ -459,10 +593,80 @@ class InsEagleSyncApp(_BaseWindow):
             self.settings_tab.grid_remove()
             self.sync_tab.grid()
 
+    def toggle_language(self) -> None:
+        self.language = LANGUAGE_EN if self.language == LANGUAGE_ZH else LANGUAGE_ZH
+        self.config_data["language"] = self.language
+        try:
+            write_config_data(self.config_data, get_runtime_config_path())
+        except Exception as exc:  # noqa: BLE001 - language switching should remain usable even if saving fails.
+            self._append_log(f"警告：保存语言设置失败：{exc}")
+        self._apply_language()
+
+    def _apply_language(self) -> None:
+        self._translate_widget_tree(self)
+        self.nav_tabs.configure(values=self._localized_values([SYNC_TAB_NAME, SETTINGS_TAB_NAME]))
+        active_tab = SETTINGS_TAB_NAME if self.settings_tab.winfo_ismapped() else SYNC_TAB_NAME
+        self.nav_tabs.set(self._tr(active_tab))
+        self.language_button.configure(text=LANGUAGE_TOGGLE_LABELS[self.language])
+        self.status_var.set(self._tr(self._to_zh(self.status_var.get())))
+        self._apply_segmented_language(self.mode, [MODE_POST, MODE_AUTHOR])
+        self._apply_segmented_language(self.author_range_choice, list(AUTHOR_SYNC_RANGE_VALUES))
+        self._apply_segmented_language(self.date_range_choice, list(DATE_RANGE_VALUES))
+        self._apply_segmented_language(self.login_method, [LOGIN_COOKIE_FILE, LOGIN_BROWSER, LOGIN_NONE])
+        self._apply_segmented_language(self.proxy_mode, list(PROXY_MODE_VALUES))
+        self._apply_segmented_language(self.browser_choice, list(BROWSER_LABELS))
+        self._login_method_changed()
+        self._proxy_mode_changed()
+        self._sync_mode_changed()
+        self._author_range_changed()
+        self._update_storage_preview()
+
+    def _translate_widget_tree(self, widget: Any) -> None:
+        try:
+            text = widget.cget("text")
+        except Exception:  # noqa: BLE001 - not every Tk/CTk widget exposes text.
+            text = None
+        if isinstance(text, str) and text in EN_TEXT:
+            try:
+                widget.configure(text=self._tr(text))
+            except Exception:  # noqa: BLE001 - best effort for mixed Tk/CTk widgets.
+                pass
+        elif isinstance(text, str) and text in ZH_TEXT:
+            try:
+                widget.configure(text=text if self.language == LANGUAGE_EN else self._to_zh(text))
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            placeholder = widget.cget("placeholder_text")
+        except Exception:  # noqa: BLE001
+            placeholder = None
+        if isinstance(placeholder, str):
+            source = self._to_zh(placeholder)
+            if source in EN_TEXT:
+                try:
+                    widget.configure(placeholder_text=self._tr(source))
+                except Exception:  # noqa: BLE001
+                    pass
+        try:
+            children = widget.winfo_children()
+        except Exception:  # noqa: BLE001
+            return
+        for child in children:
+            self._translate_widget_tree(child)
+
+    def _apply_segmented_language(self, widget: Any, zh_values: list[str]) -> None:
+        current = self._to_zh(widget.get())
+        localized = self._localized_values(zh_values)
+        try:
+            widget.configure(values=localized)
+        except Exception:  # noqa: BLE001
+            return
+        widget.set(self._tr(current if current in zh_values else zh_values[0]))
+
     def open_cookie_setup_guide(self) -> None:
-        self.nav_tabs.set(SETTINGS_TAB_NAME)
+        self.nav_tabs.set(self._tr(SETTINGS_TAB_NAME))
         self._show_main_tab(SETTINGS_TAB_NAME)
-        self.login_method.set(LOGIN_COOKIE_FILE)
+        self.login_method.set(self._tr(LOGIN_COOKIE_FILE))
         self._login_method_changed(LOGIN_COOKIE_FILE)
         self._scroll_settings_to_section("instagram")
 
@@ -1407,11 +1611,12 @@ class InsEagleSyncApp(_BaseWindow):
         self._set_entry(self.max_posts_entry, str(get_config_value(self.config_data, "max_posts")))
         self._set_entry(self.anchor_date_entry, today_iso())
         self._set_entry(self.date_range_amount_entry, "1")
-        self.author_range_choice.set(AUTHOR_SYNC_UNLIMITED)
-        self.date_range_choice.set(DATE_RANGE_DAY)
+        self.author_range_choice.set(self._tr(AUTHOR_SYNC_UNLIMITED))
+        self.date_range_choice.set(self._tr(DATE_RANGE_DAY))
         self._populate_settings_form()
         self._sync_mode_changed(MODE_POST)
         self._author_range_changed(AUTHOR_SYNC_UNLIMITED)
+        self.status_var.set(self._tr(STATUS_READY))
 
     def _load_config(self) -> AppConfig:
         try:
@@ -1434,13 +1639,13 @@ class InsEagleSyncApp(_BaseWindow):
             self._set_entry(self.setting_entries[key], str(value or ""))
         method, browser_label, profile = get_login_form_values(self.config_data)
         self.selected_default_folder_id = get_config_value(self.config_data, "default_folder_id") or None
-        self.proxy_mode.set(PROXY_VALUE_TO_MODE.get(get_config_value(self.config_data, "proxy_mode"), PROXY_AUTO))
+        self.proxy_mode.set(self._tr(PROXY_VALUE_TO_MODE.get(get_config_value(self.config_data, "proxy_mode"), PROXY_AUTO)))
         detected_proxy = get_config_value(self.config_data, "detected_proxy")
         self.proxy_detect_result_var.set(
             f"当前检测结果：已检测到 {detected_proxy}" if detected_proxy else "当前检测结果：未检测"
         )
         self._proxy_mode_changed(self.proxy_mode.get())
-        self.login_method.set(method)
+        self.login_method.set(self._tr(method))
         self.browser_choice.set(browser_label)
         self.browser_profile_entry.set(profile)
         self._login_method_changed(method)
@@ -1453,7 +1658,7 @@ class InsEagleSyncApp(_BaseWindow):
         )
         if path:
             self._set_entry(self.setting_entries["cookies_file"], path)
-            self.login_method.set(LOGIN_COOKIE_FILE)
+            self.login_method.set(self._tr(LOGIN_COOKIE_FILE))
             self._login_method_changed(LOGIN_COOKIE_FILE)
 
     def choose_storage_parent_dir(self) -> None:
@@ -1554,12 +1759,12 @@ class InsEagleSyncApp(_BaseWindow):
         data["default_eagle_folder_id"] = self.selected_default_folder_id or ""
         data = apply_login_settings(
             data,
-            method=self.login_method.get(),
+            method=self._to_zh(self.login_method.get()),
             browser_label=self.browser_choice.get(),
             profile=self.browser_profile_entry.get().strip(),
             cookie_file=self._setting_value("cookies_file"),
         )
-        if self.login_method.get() == LOGIN_COOKIE_FILE:
+        if self._to_zh(self.login_method.get()) == LOGIN_COOKIE_FILE:
             cookie_file = self._setting_value("cookies_file")
             if not cookie_file:
                 self._append_log("警告：Instagram 登录 Cookie 文件未设置，部分内容可能需要登录。")
@@ -1567,7 +1772,7 @@ class InsEagleSyncApp(_BaseWindow):
                 self._append_log("警告：Instagram 登录 Cookie 文件不存在：<hidden>")
         data = apply_proxy_settings(
             data,
-            mode_label=self.proxy_mode.get(),
+            mode_label=self._to_zh(self.proxy_mode.get()),
             http_proxy=http_proxy,
             https_proxy=https_proxy,
             detected_result=self.proxy_detect_result_var.get(),
@@ -1587,7 +1792,7 @@ class InsEagleSyncApp(_BaseWindow):
         parent = self._setting_value(STORAGE_PARENT_KEY) if STORAGE_PARENT_KEY in self.setting_entries else ""
         if not parent:
             for var in self.storage_preview_vars.values():
-                var.set("未设置")
+                var.set(self._tr("未设置"))
             return
         paths = build_storage_paths(parent)
         for key, value in paths.items():
@@ -1627,7 +1832,7 @@ class InsEagleSyncApp(_BaseWindow):
             return False
 
     def _sync_mode_changed(self, value: str | None = None) -> None:
-        mode = value or self.mode.get()
+        mode = self._to_zh(value or self.mode.get())
         if mode == MODE_AUTHOR:
             self.author_options_slot.grid()
             self.author_options_panel.grid()
@@ -1637,7 +1842,7 @@ class InsEagleSyncApp(_BaseWindow):
             self.author_options_panel.grid_remove()
 
     def _author_range_changed(self, value: str | None = None) -> None:
-        range_mode = value or self.author_range_choice.get()
+        range_mode = self._to_zh(value or self.author_range_choice.get())
         if range_mode == AUTHOR_SYNC_RECENT:
             self.recent_posts_frame.grid()
             self.date_options_frame.grid_remove()
@@ -1657,7 +1862,7 @@ class InsEagleSyncApp(_BaseWindow):
                 self.browser_profile_entry.set(profiles[0])
 
     def _login_method_changed(self, value: str | None = None) -> None:
-        method = value or self.login_method.get()
+        method = self._to_zh(value or self.login_method.get())
         if method == LOGIN_BROWSER:
             self.browser_login_frame.grid()
             self.cookie_file_frame.grid_remove()
@@ -1669,7 +1874,7 @@ class InsEagleSyncApp(_BaseWindow):
             self.cookie_file_frame.grid_remove()
 
     def _proxy_mode_changed(self, value: str | None = None) -> None:
-        mode = value or self.proxy_mode.get()
+        mode = self._to_zh(value or self.proxy_mode.get())
         if mode == PROXY_MANUAL:
             self.proxy_auto_frame.grid_remove()
             self.proxy_manual_frame.grid()
@@ -1786,13 +1991,13 @@ class InsEagleSyncApp(_BaseWindow):
         if self.log_panel_visible:
             self.log_panel.grid_remove()
             self.log_panel_visible = False
-            self.toggle_log_button.configure(text="显示日志")
+            self.toggle_log_button.configure(text=self._tr("显示日志"))
             self._place_main_layout(show_cookie_guide=should_show_cookie_setup_guide(self.config))
             return
 
         self.log_panel_visible = True
         self._place_main_layout(show_cookie_guide=should_show_cookie_setup_guide(self.config))
-        self.toggle_log_button.configure(text="隐藏日志")
+        self.toggle_log_button.configure(text=self._tr("隐藏日志"))
         self.log_text.see("end")
 
     def preview(self) -> None:
@@ -1949,7 +2154,7 @@ class InsEagleSyncApp(_BaseWindow):
 
         self._warn_about_cookies()
         dry_run = True if force_dry_run else self.dry_run_var.get()
-        mode = self.mode.get()
+        mode = self._to_zh(self.mode.get())
         normalized_url: str | None = None
         normalized_post_urls: list[str] = []
         if mode == MODE_AUTHOR:
@@ -2040,7 +2245,9 @@ class InsEagleSyncApp(_BaseWindow):
         return value
 
     def _read_author_sync_range(self) -> tuple[int | None, str | None, str | None] | bool:
-        range_mode = self.author_range_choice.get() if hasattr(self, "author_range_choice") else AUTHOR_SYNC_UNLIMITED
+        range_mode = (
+            self._to_zh(self.author_range_choice.get()) if hasattr(self, "author_range_choice") else AUTHOR_SYNC_UNLIMITED
+        )
         if range_mode == AUTHOR_SYNC_RECENT:
             max_posts = self._read_recent_posts_count()
             if max_posts is False:
@@ -2056,7 +2263,7 @@ class InsEagleSyncApp(_BaseWindow):
 
     def _read_date_range(self) -> tuple[str, str] | bool:
         anchor_date = self.anchor_date_entry.get().strip() if hasattr(self, "anchor_date_entry") else today_iso()
-        range_label = self.date_range_choice.get() if hasattr(self, "date_range_choice") else DATE_RANGE_DAY
+        range_label = self._to_zh(self.date_range_choice.get()) if hasattr(self, "date_range_choice") else DATE_RANGE_DAY
         range_amount_text = (
             self.date_range_amount_entry.get().strip() if hasattr(self, "date_range_amount_entry") else "1"
         )
@@ -2076,7 +2283,7 @@ class InsEagleSyncApp(_BaseWindow):
         if not url:
             return self.config.staging_dir
 
-        if self.mode.get() == MODE_AUTHOR:
+        if self._to_zh(self.mode.get()) == MODE_AUTHOR:
             url_values = split_instagram_url_text(url)
             if len(url_values) != 1:
                 raise ValueError("作者主页模式只能填写一个作者主页链接。")
@@ -2214,7 +2421,7 @@ class InsEagleSyncApp(_BaseWindow):
             "程序将切换到 cookies.txt 模式，并打开获取 cookies.txt 的说明。",
         )
         try:
-            self.login_method.set(LOGIN_COOKIE_FILE)
+            self.login_method.set(self._tr(LOGIN_COOKIE_FILE))
             self._login_method_changed(LOGIN_COOKIE_FILE)
         except Exception:  # noqa: BLE001 - keep the help dialog available even if widgets are unavailable.
             pass
@@ -2286,12 +2493,12 @@ class InsEagleSyncApp(_BaseWindow):
             stop_style = BUTTON_STYLES["secondary"] if enabled else BUTTON_STYLES["danger"]
             self.stop_button.configure(state="disabled" if enabled else "normal", **stop_style)
         if enabled:
-            self.sync_button.configure(text="开始同步")
+            self.sync_button.configure(text=self._tr("开始同步"))
         else:
-            self.sync_button.configure(text="正在运行...")
+            self.sync_button.configure(text=self._tr("正在运行..."))
 
     def _set_status(self, value: str) -> None:
-        self.status_var.set(value)
+        self.status_var.set(self._tr(value))
         color = {
             STATUS_READY: COLORS["success"],
             STATUS_RUNNING: COLORS["primary"],
@@ -2741,6 +2948,11 @@ def normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
 
 def default_config_data() -> dict[str, Any]:
     return deepcopy(DEFAULT_CONFIG_DATA)
+
+
+def normalize_language(value: object) -> str:
+    text = str(value or "").strip().lower()
+    return LANGUAGE_EN if text == LANGUAGE_EN else LANGUAGE_ZH
 
 
 def get_config_value(data: dict[str, Any], key: str) -> Any:
