@@ -194,7 +194,7 @@ EN_TEXT: dict[str, str] = {
     "仅在“最近 N 条”模式下生效。": "Only applies in Recent N posts mode.",
     "开始日期": "Start Date",
     "范围": "Range",
-    "设置中心": "Settings",
+    "设置中心": "Settings Center",
     "管理登录方式、存储路径、网络连接及应用行为设置。": "Manage login, storage paths, network connection, and app behavior.",
     "1. Instagram 登录方式": "1. Instagram Login",
     "cookies.txt 文件方式推荐且稳定；浏览器读取可能因 Cookie 加密、Profile 不匹配或浏览器未关闭而失败；不登录模式只适合部分公开内容。": "cookies.txt is recommended and stable. Browser reading can fail because of cookie encryption, profile mismatch, or an open browser. No-login mode only works for some public content.",

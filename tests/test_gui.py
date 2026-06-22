@@ -471,7 +471,11 @@ def test_english_display_values_map_back_to_chinese_internal_values() -> None:
     app.language = gui.LANGUAGE_EN
 
     assert gui.InsEagleSyncApp._tr(app, gui.SYNC_TAB_NAME) == "Sync"
+    assert gui.InsEagleSyncApp._tr(app, gui.SETTINGS_TAB_NAME) == "Settings"
+    assert gui.InsEagleSyncApp._tr(app, "设置中心") == "Settings Center"
     assert gui.InsEagleSyncApp._to_zh(app, "Sync") == gui.SYNC_TAB_NAME
+    assert gui.InsEagleSyncApp._to_zh(app, "Settings") == gui.SETTINGS_TAB_NAME
+    assert gui.InsEagleSyncApp._to_zh(app, "Settings Center") == "设置中心"
     assert gui.InsEagleSyncApp._to_zh(app, "Author Profile") == gui.MODE_AUTHOR
 
 
