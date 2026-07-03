@@ -117,11 +117,18 @@ try {
     throw "gallery_dl Python module is not available for bundling. Run: py -m pip install -U gallery-dl"
 }
 
+try {
+    $ytDlpModuleVersionText = (py -m yt_dlp --version).Trim()
+} catch {
+    throw "yt_dlp Python module is not available for bundling. Run: py -m pip install -U yt-dlp"
+}
+
 if ($galleryDlModuleVersion -lt $MinimumGalleryDlVersion) {
     throw "gallery_dl Python module is $galleryDlModuleVersionText, but packaging requires $MinimumGalleryDlVersion or newer. Run: py -m pip install -U gallery-dl"
 }
 
 Write-Host "Bundling gallery_dl Python module version $galleryDlModuleVersionText"
+Write-Host "Bundling yt_dlp Python module version $ytDlpModuleVersionText"
 
 if (-not (Test-Path $IconPath)) {
     Write-Warning "assets/app_icon.ico was not found. The exe will be built without a custom icon."
@@ -137,8 +144,10 @@ $pyinstallerArgs = @(
     "--paths", "src",
     "--collect-all", "customtkinter",
     "--collect-all", "gallery_dl",
+    "--collect-all", "yt_dlp",
     "--hidden-import", "gallery_dl",
     "--hidden-import", "gallery_dl.__main__",
+    "--hidden-import", "yt_dlp",
     "--collect-submodules", "gallery_dl.extractor",
     "--collect-submodules", "gallery_dl.downloader",
     "--collect-submodules", "gallery_dl.postprocessor",

@@ -1140,6 +1140,7 @@ def test_startup_checks_report_packaged_gallery_and_optional_ytdlp(project_tmp_p
         patch("ins_eagle_sync.gui.EagleClient", return_value=fake_eagle),
         patch("ins_eagle_sync.gui.resolve_gallery_dl_command", return_value=[str(gallery_exe)]),
         patch("ins_eagle_sync.gui.resolve_ytdlp_command", return_value=None),
+        patch("ins_eagle_sync.gui.importlib_util.find_spec", return_value=None),
         patch("ins_eagle_sync.gui.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="1.29.0\n", stderr="")),
     ):
         messages = gui.run_startup_checks(config)
@@ -1147,6 +1148,25 @@ def test_startup_checks_report_packaged_gallery_and_optional_ytdlp(project_tmp_p
     joined = "\n".join(messages)
     assert "已找到内置 gallery-dl.exe" in joined
     assert "未找到 yt-dlp" in joined
+
+
+def test_startup_checks_report_bundled_ytdlp_module(project_tmp_path) -> None:
+    config_path = project_tmp_path / "config.json"
+    gui.write_config_data(gui.default_config_data(), config_path)
+    config = load_config(config_path)
+    fake_eagle = type("FakeEagle", (), {"check_app_available": lambda self: True})()
+
+    with (
+        patch("ins_eagle_sync.gui.EagleClient", return_value=fake_eagle),
+        patch("ins_eagle_sync.gui.resolve_gallery_dl_command", return_value=["py", "-m", "gallery_dl"]),
+        patch("ins_eagle_sync.gui.resolve_ytdlp_command", return_value=None),
+        patch("ins_eagle_sync.gui.importlib_util.find_spec", return_value=object()),
+        patch("ins_eagle_sync.gui.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="1.32.1\n", stderr="")),
+    ):
+        messages = gui.run_startup_checks(config)
+
+    joined = "\n".join(messages)
+    assert "已内置 yt-dlp Python 模块" in joined
 
 
 def test_startup_checks_report_bundled_gallery_module(project_tmp_path) -> None:

@@ -144,8 +144,10 @@ def test_build_script_copies_release_assets_but_not_user_data() -> None:
     assert "--icon" in script
     assert "assets\\app_icon.ico" in script
     assert "--collect-all\", \"gallery_dl" in script
+    assert "--collect-all\", \"yt_dlp" in script
     assert "--hidden-import\", \"gallery_dl" in script
     assert "--hidden-import\", \"gallery_dl.__main__" in script
+    assert "--hidden-import\", \"yt_dlp" in script
     assert "--collect-submodules\", \"gallery_dl.extractor" in script
     assert "--collect-submodules\", \"gallery_dl.downloader" in script
     assert "--collect-submodules\", \"gallery_dl.postprocessor" in script
@@ -153,7 +155,9 @@ def test_build_script_copies_release_assets_but_not_user_data() -> None:
     assert "gallery_dl.main()" in script
     assert "$MinimumGalleryDlVersion = [version]\"1.32.1\"" in script
     assert "py -m gallery_dl --version" in script
+    assert "py -m yt_dlp --version" in script
     assert "Bundling gallery_dl Python module version" in script
+    assert "Bundling yt_dlp Python module version" in script
     assert "IncludeExternalGalleryDl" in script
     assert "-AllowPathLookup $false" in script
     assert "Remove-Item -Force -Path $staleGalleryDl" in script

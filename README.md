@@ -47,7 +47,7 @@ Instagram to Eagle/
 ├── config.example.json
 ├── assets/
 ├── tools/
-│   └── yt-dlp.exe          recommended, reduces some video download warnings
+│   └── yt-dlp.exe          optional external helper
 └── _internal/
 ```
 
@@ -57,7 +57,7 @@ Notes:
 - `cookies.txt` is not bundled. Users must export it themselves and select it in Settings.
 - Your settings, cookies path, storage folder, and other local choices are not cleared when reopening the exe.
 - When upgrading, close the old app before running the new package.
-- A missing `yt-dlp` log message does not always mean failure; gallery-dl may try fallback URLs.
+- The packaged app bundles the `yt_dlp` Python module for gallery-dl's ytdl fallback. `tools/yt-dlp.exe` is only an optional external helper.
 - If logs mention Instagram login, 403, 401, or redirecting to the login page, export a fresh `cookies.txt` first.
 
 ## Features
@@ -244,7 +244,7 @@ The GUI log shows `gallery-dl` stdout and stderr in real time. Warnings do not a
 
 Common warnings:
 
-- `[downloader.ytdl][error] Cannot import yt-dlp or youtube-dl`: ytdl fallback is unavailable. If the final file downloads successfully, this can be ignored. Install `yt-dlp` if needed.
+- `[downloader.ytdl][error] Cannot import yt-dlp or youtube-dl`: ytdl fallback cannot import the `yt_dlp` Python module. In the packaged app, rebuild with the latest packaging script. In a development environment, install `yt-dlp`.
 - `[download][info] Trying fallback URL #1`: gallery-dl is trying another download URL.
 - `[downloader.http][warning] IncompleteRead...`: the network connection was interrupted; gallery-dl will retry according to its own retry strategy.
 - `Read timed out`, `HTTPSConnectionPool`, or `downloader.http warning`: usually caused by Instagram CDN, network, or proxy timeouts.
@@ -335,7 +335,7 @@ dist/
     │   └── app_icon.ico
     ├── tools/
     │   ├── gallery-dl.exe  # optional
-    │   └── yt-dlp.exe      # recommended
+    │   └── yt-dlp.exe      # optional external helper
     └── _internal/
 ```
 
@@ -345,7 +345,7 @@ By default, packaging collects the `gallery_dl` Python package into the main app
 - `README.md`
 - `config.example.json`
 
-`gallery-dl.exe` is optional. To override the bundled module version or temporarily use a specific version, put an external executable at `tools/gallery-dl.exe`. `yt-dlp.exe` is recommended to reduce `Cannot import yt-dlp or youtube-dl` warnings for some video downloads. Missing `yt-dlp` does not necessarily make sync fail because gallery-dl may continue with fallback URLs.
+`gallery-dl.exe` is optional. To override the bundled module version or temporarily use a specific version, put an external executable at `tools/gallery-dl.exe`. The packaged app now bundles the `yt_dlp` Python module because gallery-dl's ytdl fallback imports that module directly. `tools/yt-dlp.exe` is still copied when available as an optional external helper, but it is not the fix for `Cannot import yt-dlp or youtube-dl`.
 
 The packaging script copies:
 
@@ -364,7 +364,7 @@ The packaging script does not copy:
 - `.pytest_cache/`
 - `__pycache__/`
 
-The default packaging flow bundles the `gallery_dl` package from the current Python environment and requires version `1.32.1` or newer. Tool executables can be specified explicitly:
+The default packaging flow bundles the `gallery_dl` and `yt_dlp` packages from the current Python environment. `gallery_dl` must be version `1.32.1` or newer. Tool executables can be specified explicitly:
 
 ```powershell
 .\scripts\build_exe.ps1 -GalleryDlExePath "C:\path\to\gallery-dl.exe" -YtDlpExePath "C:\path\to\yt-dlp.exe"
@@ -372,7 +372,7 @@ The default packaging flow bundles the `gallery_dl` package from the current Pyt
 
 Without arguments, the script does not copy `tools/gallery-dl.exe`; it uses the bundled `gallery_dl` module instead, avoiding old external executables overriding a newer module. External `gallery-dl.exe` is copied only when `-GalleryDlExePath` is provided or `-IncludeExternalGalleryDl` is used. `yt-dlp.exe` is loaded first from `tools/yt-dlp.exe`, then from PATH.
 
-If `gallery-dl.exe` is missing, the script prints an optional warning and the packaged app uses the bundled `gallery_dl` module. If `yt-dlp.exe` is missing, the script prints an optional warning.
+If `gallery-dl.exe` is missing, the script prints an optional warning and the packaged app uses the bundled `gallery_dl` module. If `yt-dlp.exe` is missing, the script prints an optional warning, but the bundled `yt_dlp` Python module is still available to gallery-dl.
 
 Runtime `gallery-dl` lookup order:
 
@@ -395,7 +395,7 @@ Runtime `yt-dlp` lookup order:
 5. Development environment: `yt-dlp.exe`
 6. Development environment fallback: `py -m yt_dlp`
 
-If `yt-dlp` is unavailable in the packaged app, the tool only shows a warning and does not directly mark the task as failed.
+If the optional external `yt-dlp.exe` is unavailable in the packaged app, the tool only shows a warning and does not directly mark the task as failed. The bundled `yt_dlp` Python module remains the main fallback used by gallery-dl.
 
 After packaging, still prepare or confirm:
 
@@ -405,7 +405,7 @@ After packaging, still prepare or confirm:
 
 `cookies.txt` is not bundled. Users select it from the GUI Settings page. `config.json` is generated when users save settings for the first time; settings are not written into the exe. As long as `config.json` is kept during upgrades, cookies path, storage path, proxy, and Eagle folder settings remain. Deleting `config.json`, or running from a new directory without it, recreates default configuration.
 
-GUI startup checks show whether the app is running in development or packaged mode, and whether `gallery-dl` / `yt-dlp` is available. If `tools/gallery-dl.exe` exists, the GUI reports the bundled exe. If there is no exe but PyInstaller collected the module correctly, it reports the bundled `gallery-dl Python module`.
+GUI startup checks show whether the app is running in development or packaged mode, and whether `gallery-dl` / `yt-dlp` is available. If `tools/gallery-dl.exe` exists, the GUI reports the bundled exe. If there is no exe but PyInstaller collected the module correctly, it reports the bundled `gallery-dl Python module`. For ytdl fallback, the GUI can also report the bundled `yt-dlp Python module`.
 
 ### App Icon
 
@@ -568,7 +568,7 @@ Instagram to Eagle/
 ├── config.example.json
 ├── assets/
 ├── tools/
-│   └── yt-dlp.exe          推荐包含，用于减少部分视频下载 warning
+│   └── yt-dlp.exe          可选外部辅助程序
 └── _internal/
 ```
 
@@ -578,7 +578,7 @@ Instagram to Eagle/
 - `cookies.txt` 不会内置，用户需要自己导出并在设置页选择。
 - 你的设置、cookies 路径、保存地址等不会因为重新打开 exe 自动清空。
 - 更新版本时，建议先关闭旧版程序，再使用新的发布包运行。
-- 如果日志提示 `yt-dlp` 缺失，通常不一定代表失败；gallery-dl 会尝试备用下载方式。
+- 打包版会内置 `yt_dlp` Python 模块，用于 gallery-dl 的 ytdl fallback。`tools/yt-dlp.exe` 只是可选外部辅助程序。
 - 如果日志提示 Instagram 登录、403、401 或跳转登录页，优先重新导出 `cookies.txt`。
 
 ### 功能概览
@@ -764,7 +764,7 @@ GUI 日志会实时显示 `gallery-dl` 的 stdout / stderr。warning 不等于�
 
 常见 warning：
 
-- `[downloader.ytdl][error] Cannot import yt-dlp or youtube-dl`：表示 ytdl fallback 不可用。若最终文件下载成功，可以忽略；需要时安装 `yt-dlp`。
+- `[downloader.ytdl][error] Cannot import yt-dlp or youtube-dl`：表示 ytdl fallback 无法导入 `yt_dlp` Python 模块。打包版请使用最新打包脚本重新封包；开发环境请安装 `yt-dlp`。
 - `[download][info] Trying fallback URL #1`：gallery-dl 正在尝试备用下载地址。
 - `[downloader.http][warning] IncompleteRead...`：网络连接中断，gallery-dl 会按自身重试策略继续尝试。
 - `Read timed out`、`HTTPSConnectionPool`、`downloader.http warning`：通常是 Instagram CDN、网络或代理导致的下载超时。
@@ -855,7 +855,7 @@ dist/
     │   └── app_icon.ico
     ├── tools/
     │   ├── gallery-dl.exe  # 可选
-    │   └── yt-dlp.exe      # 推荐
+    │   └── yt-dlp.exe      # 可选外部辅助程序
     └── _internal/
 ```
 
@@ -865,7 +865,7 @@ dist/
 - `README.md`
 - `config.example.json`
 
-`gallery-dl.exe` 现在是可选依赖。如果希望覆盖内置模块版本，或临时使用指定版本，可以把外置程序放到 `tools/gallery-dl.exe`。`yt-dlp.exe` 是推荐依赖，用于减少部分视频下载时的 `Cannot import yt-dlp or youtube-dl` warning。缺少它不一定导致同步失败，gallery-dl 可能会继续尝试备用下载方式。
+`gallery-dl.exe` 现在是可选依赖。如果希望覆盖内置模块版本，或临时使用指定版本，可以把外置程序放到 `tools/gallery-dl.exe`。打包版现在会内置 `yt_dlp` Python 模块，因为 gallery-dl 的 ytdl fallback 会直接 import 该模块。`tools/yt-dlp.exe` 仍会在存在时复制进发布包，但它只是可选外部辅助程序，不是解决 `Cannot import yt-dlp or youtube-dl` 的关键。
 
 打包脚本会复制：
 
@@ -884,7 +884,7 @@ dist/
 - `.pytest_cache/`
 - `__pycache__/`
 
-默认打包会内置当前 Python 环境中的 `gallery_dl` 包，并要求版本至少为 `1.32.1`。可以显式指定工具 exe：
+默认打包会内置当前 Python 环境中的 `gallery_dl` 和 `yt_dlp` 包，并要求 `gallery_dl` 版本至少为 `1.32.1`。可以显式指定工具 exe：
 
 ```powershell
 .\scripts\build_exe.ps1 -GalleryDlExePath "C:\path\to\gallery-dl.exe" -YtDlpExePath "C:\path\to\yt-dlp.exe"
@@ -892,7 +892,7 @@ dist/
 
 如果不传参数，脚本不会复制项目根目录的 `tools/gallery-dl.exe`，而是使用 PyInstaller 内置的 `gallery_dl` 模块，避免旧版 exe 覆盖新版模块。只有传入 `-GalleryDlExePath`，或显式使用 `-IncludeExternalGalleryDl` 时，才会复制外置 `gallery-dl.exe`。`yt-dlp.exe` 会优先读取项目根目录的 `tools/yt-dlp.exe`，然后尝试从 PATH 查找。
 
-如果 `gallery-dl.exe` 缺失，脚本会输出可选 warning，发布包会使用内置的 `gallery_dl` Python 模块下载。如果 `yt-dlp.exe` 缺失，脚本会输出可选 warning。
+如果 `gallery-dl.exe` 缺失，脚本会输出可选 warning，发布包会使用内置的 `gallery_dl` Python 模块下载。如果 `yt-dlp.exe` 缺失，脚本会输出可选 warning，但 gallery-dl 仍可使用内置的 `yt_dlp` Python 模块。
 
 `gallery-dl` 运行时查找策略：
 
@@ -915,7 +915,7 @@ dist/
 5. 开发环境：`yt-dlp.exe`
 6. 开发环境 fallback：`py -m yt_dlp`
 
-打包环境找不到 `yt-dlp` 时只提示，不会直接判定任务失败。
+打包环境找不到可选外部 `yt-dlp.exe` 时只提示，不会直接判定任务失败。gallery-dl 主要使用内置的 `yt_dlp` Python 模块作为 fallback。
 
 打包后仍需要准备或确认：
 
@@ -925,7 +925,7 @@ dist/
 
 `cookies.txt` 不会内置进发布包，用户需要在 GUI 设置页选择。`config.json` 会在用户首次保存设置时生成；设置不会被写进 exe。只要发布或升级时保留 `config.json`，cookies 路径、保存地址、代理和 Eagle 文件夹设置就不会清空。删除 `config.json` 或换到一个没有 `config.json` 的新目录运行时，程序会按默认配置重新创建。
 
-GUI 启动检查会显示当前是开发环境还是已打包运行，并提示 `gallery-dl` / `yt-dlp` 是否可用。如果存在 `tools/gallery-dl.exe`，会显示已找到内置 exe；如果没有 exe 但 PyInstaller 已正确收集模块，会显示已内置 `gallery-dl Python 模块`。
+GUI 启动检查会显示当前是开发环境还是已打包运行，并提示 `gallery-dl` / `yt-dlp` 是否可用。如果存在 `tools/gallery-dl.exe`，会显示已找到内置 exe；如果没有 exe 但 PyInstaller 已正确收集模块，会显示已内置 `gallery-dl Python 模块`。对于 ytdl fallback，也会识别已内置的 `yt-dlp Python 模块`。
 
 #### 一键打包并上传 GitHub
 

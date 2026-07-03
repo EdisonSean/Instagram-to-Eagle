@@ -33,8 +33,8 @@ DATE_FILTER_FALLBACK_HINT = (
     f"{DATE_FILTER_FALLBACK_TERMINATE_SKIPS} 个旧文件后停止，避免作者主页翻页卡住。"
 )
 YTDLP_MISSING_HINT = (
-    "提示：未找到 yt-dlp / youtube-dl。gallery-dl 会尝试备用下载方式；"
-    "如果视频下载失败，请确认发布包 tools/yt-dlp.exe 存在。"
+    "提示：gallery-dl 无法导入 yt-dlp / youtube-dl Python 模块。"
+    "如果你正在使用打包版，请重新使用新版打包脚本封包；如果你正在开发环境运行，请安装 yt-dlp。"
 )
 
 

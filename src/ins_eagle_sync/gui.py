@@ -10,6 +10,7 @@ import tkinter as tk
 import webbrowser
 from copy import deepcopy
 from datetime import date, timedelta
+from importlib import util as importlib_util
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import Any, Callable
@@ -3492,6 +3493,7 @@ def _localize_log_fragment(text: str) -> str:
         "不使用代理": "no proxy",
         "未找到 gallery-dl，无法下载。请确认发布包完整。": "gallery-dl was not found; cannot download. Confirm the release package is complete.",
         "未找到 yt-dlp，部分视频可能使用备用下载方式。": "yt-dlp was not found; some videos may use the fallback downloader.",
+        "已内置 yt-dlp Python 模块": "Bundled yt-dlp Python module found",
         "已找到内置 gallery-dl.exe": "Bundled gallery-dl.exe found",
         "已内置 gallery-dl Python 模块": "Bundled gallery-dl Python module found",
         "开发环境 gallery-dl Python 模块可用": "Development gallery-dl Python module is available",
@@ -3658,6 +3660,8 @@ def check_gallery_dl_available(config: AppConfig | str) -> tuple[bool, str]:
 def check_ytdlp_available(config: AppConfig) -> tuple[bool, str]:
     command = resolve_ytdlp_command(config)
     if not command:
+        if importlib_util.find_spec("yt_dlp") is not None:
+            return True, "正常：已内置 yt-dlp Python 模块。"
         return False, "未找到 yt-dlp，部分视频可能使用备用下载方式。"
     if len(command) == 1 and Path(command[0]).name.lower() == YT_DLP_EXE_NAME:
         return True, "正常：已找到 yt-dlp.exe。"
