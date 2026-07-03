@@ -16,6 +16,9 @@ $DistRoot = Join-Path $RepoRoot "dist"
 $DistAppDir = Join-Path $DistRoot $AppName
 $DistToolsDir = Join-Path $DistAppDir "tools"
 $DistAssetsDir = Join-Path $DistAppDir "assets"
+$BuildRoot = Join-Path $RepoRoot "build"
+$BuildAppDir = Join-Path $BuildRoot $AppName
+$BuildExePath = Join-Path $BuildAppDir "$AppName.exe"
 $IconPath = Join-Path $RepoRoot "assets\app_icon.ico"
 $ExePath = Join-Path $DistAppDir "$AppName.exe"
 $MinimumGalleryDlVersion = [version]"1.32.1"
@@ -67,6 +70,21 @@ function Clear-PreviousBuildOutput {
             Start-Sleep -Milliseconds (300 * $attempt)
         }
     }
+}
+
+function Remove-IntermediateBuildExecutable {
+    if (-not (Test-Path $BuildExePath)) {
+        return
+    }
+
+    $resolvedBuildExePath = [System.IO.Path]::GetFullPath($BuildExePath)
+    $resolvedBuildRoot = [System.IO.Path]::GetFullPath($BuildRoot)
+    if (-not $resolvedBuildExePath.StartsWith($resolvedBuildRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove unexpected build exe path: $resolvedBuildExePath"
+    }
+
+    Remove-Item -LiteralPath $BuildExePath -Force
+    Write-Host "Removed non-runnable PyInstaller intermediate exe: $BuildExePath"
 }
 
 Clear-PreviousBuildOutput
@@ -134,6 +152,7 @@ if (Test-Path $IconPath) {
 
 $pyinstallerArgs += $EntryScript
 py @pyinstallerArgs
+Remove-IntermediateBuildExecutable
 
 New-Item -ItemType Directory -Force -Path $DistToolsDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DistAssetsDir | Out-Null
@@ -204,3 +223,4 @@ if ($ytDlpSource) {
 
 Write-Host "Build output: $DistAppDir"
 Write-Host "EXE: $ExePath"
+Write-Host "Run the exe from dist, not from build."
