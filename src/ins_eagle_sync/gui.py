@@ -37,6 +37,7 @@ from .gallerydl_runner import build_cookie_args, build_subprocess_env, format_co
 from .proxy_utils import detect_system_proxy, normalize_proxy_url, proxy_mode_label
 from .runtime import (
     APP_ICON_RELATIVE_PATH,
+    get_legacy_runtime_config_path,
     get_resource_path,
     get_runtime_config_path,
     get_runtime_example_config_path,
@@ -428,7 +429,11 @@ class InsEagleSyncApp(_BaseWindow):
             "imported_state": ctk.StringVar(value="未设置"),
         }
         try:
-            self.config_path = ensure_config_file(get_runtime_config_path(), get_runtime_example_config_path())
+            self.config_path = ensure_config_file(
+                get_runtime_config_path(),
+                get_runtime_example_config_path(),
+                legacy_config_path=get_legacy_runtime_config_path(),
+            )
         except Exception as exc:  # noqa: BLE001 - startup must explain configuration write failures.
             show_centered_warning(self, "配置文件不可用", str(exc))
             raise
@@ -1759,7 +1764,11 @@ class InsEagleSyncApp(_BaseWindow):
 
     def reload_settings(self) -> None:
         try:
-            self.config_path = ensure_config_file(get_runtime_config_path(), get_runtime_example_config_path())
+            self.config_path = ensure_config_file(
+                get_runtime_config_path(),
+                get_runtime_example_config_path(),
+                legacy_config_path=get_legacy_runtime_config_path(),
+            )
             self.config_data = load_config_data(self.config_path)
             self.config = self._load_config()
             self._populate_settings_form()
@@ -2950,9 +2959,16 @@ class EagleFolderPickerDialog:
 def ensure_config_file(
     config_path: str | Path = DEFAULT_CONFIG_PATH,
     example_path: str | Path = EXAMPLE_CONFIG_PATH,
+    legacy_config_path: str | Path | None = None,
 ) -> Path:
     path = Path(config_path)
     if path.exists():
+        return path
+
+    legacy = Path(legacy_config_path) if legacy_config_path is not None else None
+    if legacy is not None and legacy.exists() and legacy.resolve() != path.resolve():
+        data = load_config_data(legacy)
+        write_config_data(data, path)
         return path
 
     example = Path(example_path)

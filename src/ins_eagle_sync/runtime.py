@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -25,6 +26,14 @@ def get_project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def get_user_data_dir() -> Path:
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        return Path(base) / APP_NAME
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / APP_NAME
+
+
 def get_resource_path(relative_path: str | Path) -> Path:
     relative = Path(relative_path)
     candidates = []
@@ -44,6 +53,10 @@ def get_resource_path(relative_path: str | Path) -> Path:
 
 
 def get_runtime_config_path() -> Path:
+    return get_user_data_dir() / CONFIG_FILE_NAME if is_frozen() else Path(CONFIG_FILE_NAME)
+
+
+def get_legacy_runtime_config_path() -> Path:
     return get_app_dir() / CONFIG_FILE_NAME if is_frozen() else Path(CONFIG_FILE_NAME)
 
 

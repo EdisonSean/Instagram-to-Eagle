@@ -344,6 +344,27 @@ def test_ensure_config_file_copies_example_when_config_is_missing(project_tmp_pa
     assert loaded.staging_dir == project_tmp_path / "stage"
 
 
+def test_ensure_config_file_migrates_legacy_packaged_config(project_tmp_path) -> None:
+    config_path = project_tmp_path / "AppData" / "Instagram to Eagle" / "config.json"
+    example_path = project_tmp_path / "config.example.json"
+    legacy_path = project_tmp_path / "dist" / "Instagram to Eagle" / "config.json"
+    example_data = gui.default_config_data()
+    example_data["staging_dir"] = str(project_tmp_path / "example-stage")
+    legacy_data = gui.default_config_data()
+    legacy_data["staging_dir"] = str(project_tmp_path / "legacy-stage")
+    legacy_data["language"] = gui.LANGUAGE_EN
+    gui.write_config_data(example_data, example_path)
+    gui.write_config_data(legacy_data, legacy_path)
+
+    result = gui.ensure_config_file(config_path, example_path, legacy_config_path=legacy_path)
+
+    assert result == config_path
+    assert config_path.exists()
+    loaded = load_config(config_path)
+    assert loaded.staging_dir == project_tmp_path / "legacy-stage"
+    assert gui.load_config_data(config_path)["language"] == gui.LANGUAGE_EN
+
+
 def test_write_config_data_can_be_reloaded(project_tmp_path) -> None:
     config_path = project_tmp_path / "config.json"
     data = gui.default_config_data()

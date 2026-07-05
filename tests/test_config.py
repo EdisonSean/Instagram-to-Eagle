@@ -7,7 +7,13 @@ from ins_eagle_sync.config import (
     resolve_gallery_dl_command,
     resolve_ytdlp_command,
 )
-from ins_eagle_sync.runtime import get_app_dir, get_resource_path
+from ins_eagle_sync.runtime import (
+    get_app_dir,
+    get_legacy_runtime_config_path,
+    get_resource_path,
+    get_runtime_config_path,
+    get_user_data_dir,
+)
 
 
 def make_config_data() -> dict:
@@ -131,6 +137,19 @@ def test_resource_paths_resolve_in_packaged_app(monkeypatch, tmp_path) -> None:
     assert get_resource_path("README.md") == readme
     assert get_resource_path("config.example.json") == example
     assert get_resource_path("assets/app_icon.ico") == icon
+
+
+def test_packaged_config_path_uses_user_data_dir(monkeypatch, tmp_path) -> None:
+    app_dir = tmp_path / "dist" / "Instagram to Eagle"
+    appdata = tmp_path / "AppData" / "Roaming"
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(app_dir / "Instagram to Eagle.exe"))
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    assert get_user_data_dir() == appdata / "Instagram to Eagle"
+    assert get_runtime_config_path() == appdata / "Instagram to Eagle" / "config.json"
+    assert get_legacy_runtime_config_path() == app_dir / "config.json"
 
 
 def test_build_script_copies_release_assets_but_not_user_data() -> None:

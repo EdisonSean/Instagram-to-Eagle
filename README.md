@@ -53,7 +53,7 @@ Instagram to Eagle/
 
 Notes:
 
-- `config.json` is generated when you save settings for the first time. It is not bundled in the release package.
+- In the packaged app, `config.json` is saved under `%APPDATA%\Instagram to Eagle\config.json`. It is not bundled in the release package, and app upgrades will not overwrite it.
 - `cookies.txt` is not bundled. Users must export it themselves and select it in Settings.
 - Your settings, cookies path, storage folder, and other local choices are not cleared when reopening the exe.
 - When upgrading, close the old app before running the new package.
@@ -403,7 +403,7 @@ After packaging, still prepare or confirm:
 - Valid `cookies.txt`
 - Eagle is running
 
-`cookies.txt` is not bundled. Users select it from the GUI Settings page. `config.json` is generated when users save settings for the first time; settings are not written into the exe. As long as `config.json` is kept during upgrades, cookies path, storage path, proxy, and Eagle folder settings remain. Deleting `config.json`, or running from a new directory without it, recreates default configuration.
+`cookies.txt` is not bundled. Users select it from the GUI Settings page. In the packaged app, `config.json` is saved to `%APPDATA%\Instagram to Eagle\config.json`, not next to the exe. Settings are not written into the exe, and rebuilding or replacing the release folder will not overwrite cookies path, storage path, proxy, or Eagle folder settings. On first launch after upgrading from an older portable-config build, the app migrates an old `config.json` next to the exe into the user data directory.
 
 GUI startup checks show whether the app is running in development or packaged mode, and whether `gallery-dl` / `yt-dlp` is available. If `tools/gallery-dl.exe` exists, the GUI reports the bundled exe. If there is no exe but PyInstaller collected the module correctly, it reports the bundled `gallery-dl Python module`. For ytdl fallback, the GUI can also report the bundled `yt-dlp Python module`.
 
@@ -574,7 +574,7 @@ Instagram to Eagle/
 
 说明：
 
-- `config.json` 会在你首次保存设置时生成，不会内置在发布包里。
+- 打包版的 `config.json` 会保存到 `%APPDATA%\Instagram to Eagle\config.json`，不会内置在发布包里，升级或重新解压新版不会覆盖它。
 - `cookies.txt` 不会内置，用户需要自己导出并在设置页选择。
 - 你的设置、cookies 路径、保存地址等不会因为重新打开 exe 自动清空。
 - 更新版本时，建议先关闭旧版程序，再使用新的发布包运行。
@@ -923,7 +923,7 @@ dist/
 - 有效的 `cookies.txt`
 - 已启动的 Eagle
 
-`cookies.txt` 不会内置进发布包，用户需要在 GUI 设置页选择。`config.json` 会在用户首次保存设置时生成；设置不会被写进 exe。只要发布或升级时保留 `config.json`，cookies 路径、保存地址、代理和 Eagle 文件夹设置就不会清空。删除 `config.json` 或换到一个没有 `config.json` 的新目录运行时，程序会按默认配置重新创建。
+`cookies.txt` 不会内置进发布包，用户需要在 GUI 设置页选择。打包版的 `config.json` 会保存到 `%APPDATA%\Instagram to Eagle\config.json`，不会放在 exe 旁边；设置不会被写进 exe。重新打包、替换发布目录或解压新版都不会覆盖 cookies 路径、保存地址、代理和 Eagle 文件夹设置。从旧版“exe 旁边保存 config.json”的发布包升级时，程序首次启动会自动把旧 `config.json` 迁移到用户数据目录。
 
 GUI 启动检查会显示当前是开发环境还是已打包运行，并提示 `gallery-dl` / `yt-dlp` 是否可用。如果存在 `tools/gallery-dl.exe`，会显示已找到内置 exe；如果没有 exe 但 PyInstaller 已正确收集模块，会显示已内置 `gallery-dl Python 模块`。对于 ytdl fallback，也会识别已内置的 `yt-dlp Python 模块`。
 
