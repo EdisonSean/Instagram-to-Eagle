@@ -6,7 +6,6 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
@@ -28,7 +27,7 @@ CDN_TIMEOUT_HINT = "Instagram CDN 下载超时，gallery-dl 正在重试，可�
 STILL_RUNNING_HINT = "下载仍在进行。"
 POSSIBLY_STUCK_HINT = "可能卡住。"
 DATE_FILTER_FALLBACK_HINT = (
-    "提示：当前 gallery-dl 不支持原生日期停止，将使用时间过滤 + 最近 "
+    "提示：为避免 Instagram 置顶旧帖触发原生日期停止，将使用时间过滤 + 最近 "
     f"{DATE_FILTER_FALLBACK_MAX_POSTS} 条安全上限，并在连续跳过 "
     f"{DATE_FILTER_FALLBACK_TERMINATE_SKIPS} 个旧文件后停止，避免作者主页翻页卡住。"
 )
@@ -111,7 +110,6 @@ def build_gallery_dl_command(
     command = resolve_gallery_dl_command(config)
     if not command:
         raise RuntimeError("未找到 gallery-dl，无法下载。请确认发布包完整。")
-    command_prefix = tuple(command)
     command.append("--config-ignore")
     if verbose:
         command.append("--verbose")
@@ -126,24 +124,18 @@ def build_gallery_dl_command(
         range_was_added = True
     if info.mode == InstagramMode.AUTHOR:
         if date_from or date_to:
-            if gallery_dl_supports_date_options(command_prefix):
-                if date_from:
-                    command.extend(["--date-after", date_from])
-                if date_to:
-                    command.extend(["--date-before", date_to])
-            else:
-                post_filter = build_gallery_dl_date_filter(date_from=date_from, date_to=date_to)
-                if post_filter:
-                    command.extend(["--post-filter", post_filter])
-                    fallback_range_was_added = False
-                    if not range_was_added:
-                        command.extend(["--range", f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}"])
-                        fallback_range_was_added = True
-                    if should_terminate_date_filter_fallback(
-                        date_from=date_from,
-                        fallback_range_was_added=fallback_range_was_added,
-                    ):
-                        command.extend(["--terminate", str(DATE_FILTER_FALLBACK_TERMINATE_SKIPS)])
+            post_filter = build_gallery_dl_date_filter(date_from=date_from, date_to=date_to)
+            if post_filter:
+                command.extend(["--post-filter", post_filter])
+                fallback_range_was_added = False
+                if not range_was_added:
+                    command.extend(["--range", f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}"])
+                    fallback_range_was_added = True
+                if should_terminate_date_filter_fallback(
+                    date_from=date_from,
+                    fallback_range_was_added=fallback_range_was_added,
+                ):
+                    command.extend(["--terminate", str(DATE_FILTER_FALLBACK_TERMINATE_SKIPS)])
     command.extend(["--directory", str(target_dir), url])
     return command
 
@@ -159,24 +151,6 @@ def build_cookie_args(config: AppConfig) -> list[str]:
         return ["--cookies-from-browser", config.cookies.from_browser]
 
     raise ValueError("cookies.enabled is true, but no cookies.file or cookies.from_browser is configured")
-
-
-@lru_cache(maxsize=16)
-def gallery_dl_supports_date_options(command_prefix: tuple[str, ...]) -> bool:
-    if not command_prefix:
-        return False
-    try:
-        result = subprocess.run(
-            [*command_prefix, "--help"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except Exception:
-        return False
-    help_text = f"{result.stdout}\n{result.stderr}"
-    return "--date-after" in help_text and "--date-before" in help_text
 
 
 def command_uses_date_filter_fallback(command: list[str]) -> bool:

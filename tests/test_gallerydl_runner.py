@@ -163,39 +163,36 @@ def test_build_gallery_dl_request_omits_range_for_unlimited_author_sync(project_
     assert "--range" not in request.command
 
 
-def test_build_gallery_dl_request_adds_author_date_filters(project_tmp_path):
+def test_build_gallery_dl_request_uses_post_filter_for_author_date_range(project_tmp_path):
     config = make_config(project_tmp_path)
 
-    with (
-        patch("ins_eagle_sync.gallerydl_runner.resolve_gallery_dl_command", return_value=["py", "-m", "gallery_dl"]),
-        patch("ins_eagle_sync.gallerydl_runner.gallery_dl_supports_date_options", return_value=True) as support_mock,
-    ):
-        request = build_gallery_dl_request(
-            config,
-            "https://www.instagram.com/quinn.xyz/",
-            max_posts=-1,
-            date_from="2026-01-01",
-            date_to="2026-02-01",
-        )
+    request = build_gallery_dl_request(
+        config,
+        "https://www.instagram.com/quinn.xyz/",
+        max_posts=-1,
+        date_from="2026-01-01",
+        date_to="2026-02-01",
+    )
 
-    assert "--range" not in request.command
-    assert request.command[request.command.index("--date-after") + 1] == "2026-01-01"
-    assert request.command[request.command.index("--date-before") + 1] == "2026-02-01"
-    assert "--post-filter" not in request.command
-    support_mock.assert_called_once_with(("py", "-m", "gallery_dl"))
+    assert "--date-after" not in request.command
+    assert "--date-before" not in request.command
+    assert request.command[request.command.index("--range") + 1] == f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}"
+    assert request.command[request.command.index("--terminate") + 1] == str(DATE_FILTER_FALLBACK_TERMINATE_SKIPS)
+    post_filter = request.command[request.command.index("--post-filter") + 1]
+    assert "date >= datetime(2026, 1, 1, 0, 0, 0)" in post_filter
+    assert "date < datetime(2026, 2, 1, 0, 0, 0)" in post_filter
 
 
-def test_build_gallery_dl_request_falls_back_to_post_filter_with_safety_range(project_tmp_path):
+def test_build_gallery_dl_request_adds_post_filter_with_safety_range(project_tmp_path):
     config = make_config(project_tmp_path)
 
-    with patch("ins_eagle_sync.gallerydl_runner.gallery_dl_supports_date_options", return_value=False):
-        request = build_gallery_dl_request(
-            config,
-            "https://www.instagram.com/quinn.xyz/",
-            max_posts=-1,
-            date_from="2026-01-01",
-            date_to="2026-02-01",
-        )
+    request = build_gallery_dl_request(
+        config,
+        "https://www.instagram.com/quinn.xyz/",
+        max_posts=-1,
+        date_from="2026-01-01",
+        date_to="2026-02-01",
+    )
 
     assert "--date-after" not in request.command
     assert "--date-before" not in request.command
@@ -209,14 +206,13 @@ def test_build_gallery_dl_request_falls_back_to_post_filter_with_safety_range(pr
 def test_build_gallery_dl_request_keeps_explicit_range_with_post_filter(project_tmp_path):
     config = make_config(project_tmp_path)
 
-    with patch("ins_eagle_sync.gallerydl_runner.gallery_dl_supports_date_options", return_value=False):
-        request = build_gallery_dl_request(
-            config,
-            "https://www.instagram.com/quinn.xyz/",
-            max_posts=123,
-            date_from="2026-01-01",
-            date_to="2026-02-01",
-        )
+    request = build_gallery_dl_request(
+        config,
+        "https://www.instagram.com/quinn.xyz/",
+        max_posts=123,
+        date_from="2026-01-01",
+        date_to="2026-02-01",
+    )
 
     assert request.command[request.command.index("--range") + 1] == "1-123"
     assert "--post-filter" in request.command
@@ -273,14 +269,11 @@ def test_dry_run_logs_command_without_calling_subprocess(project_tmp_path):
     assert any("command:" in line for line in logs)
 
 
-def test_dry_run_logs_date_filter_fallback_hint(project_tmp_path):
+def test_dry_run_logs_date_filter_hint(project_tmp_path):
     config = make_config(project_tmp_path)
     logs = []
 
-    with (
-        patch("ins_eagle_sync.gallerydl_runner.gallery_dl_supports_date_options", return_value=False),
-        patch("ins_eagle_sync.gallerydl_runner.subprocess.Popen") as popen_mock,
-    ):
+    with patch("ins_eagle_sync.gallerydl_runner.subprocess.Popen") as popen_mock:
         result = run_gallery_dl(
             config,
             "https://www.instagram.com/quinn.xyz/",
