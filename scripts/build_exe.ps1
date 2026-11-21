@@ -93,14 +93,13 @@ Clear-PreviousBuildOutput
 import sys
 
 from ins_eagle_sync.config import FROZEN_GALLERY_DL_MODULE_ARG
+from ins_eagle_sync.gallerydl_policy import main as gallery_dl_main
 from ins_eagle_sync.gui import main
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == FROZEN_GALLERY_DL_MODULE_ARG:
-        import gallery_dl
-
         del sys.argv[1]
-        raise SystemExit(gallery_dl.main())
+        raise SystemExit(gallery_dl_main())
     main()
 "@ | Set-Content -Path $EntryScript -Encoding UTF8
 

@@ -8,9 +8,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ins_eagle_sync.config import AppConfig, CookiesConfig, DownloadConfig, ProxyConfig
 from ins_eagle_sync.gallerydl_runner import (
-    DATE_FILTER_FALLBACK_HINT,
-    DATE_FILTER_FALLBACK_MAX_POSTS,
-    DATE_FILTER_FALLBACK_TERMINATE_SKIPS,
     GALLERY_DL_CANCELLED_HINT,
     GALLERY_DL_CANCELLED_RETURN_CODE,
     YTDLP_MISSING_HINT,
@@ -147,8 +144,8 @@ def test_build_gallery_dl_request_can_override_max_posts(project_tmp_path):
         max_posts=12,
     )
 
-    range_index = request.command.index("--range")
-    assert request.command[range_index + 1] == "1-12"
+    assert "extractor.instagram.max-posts=12" in request.command
+    assert "--range" not in request.command
 
 
 def test_build_gallery_dl_request_omits_range_for_unlimited_author_sync(project_tmp_path):
@@ -176,28 +173,8 @@ def test_build_gallery_dl_request_uses_post_filter_for_author_date_range(project
 
     assert "--date-after" not in request.command
     assert "--date-before" not in request.command
-    assert request.command[request.command.index("--range") + 1] == f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}"
-    assert request.command[request.command.index("--terminate") + 1] == str(DATE_FILTER_FALLBACK_TERMINATE_SKIPS)
-    post_filter = request.command[request.command.index("--post-filter") + 1]
-    assert "date >= datetime(2026, 1, 1, 0, 0, 0)" in post_filter
-    assert "date < datetime(2026, 2, 1, 0, 0, 0)" in post_filter
-
-
-def test_build_gallery_dl_request_adds_post_filter_with_safety_range(project_tmp_path):
-    config = make_config(project_tmp_path)
-
-    request = build_gallery_dl_request(
-        config,
-        "https://www.instagram.com/quinn.xyz/",
-        max_posts=-1,
-        date_from="2026-01-01",
-        date_to="2026-02-01",
-    )
-
-    assert "--date-after" not in request.command
-    assert "--date-before" not in request.command
-    assert request.command[request.command.index("--range") + 1] == f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}"
-    assert request.command[request.command.index("--terminate") + 1] == str(DATE_FILTER_FALLBACK_TERMINATE_SKIPS)
+    assert "--range" not in request.command
+    assert "--terminate" not in request.command
     post_filter = request.command[request.command.index("--post-filter") + 1]
     assert "date >= datetime(2026, 1, 1, 0, 0, 0)" in post_filter
     assert "date < datetime(2026, 2, 1, 0, 0, 0)" in post_filter
@@ -214,7 +191,7 @@ def test_build_gallery_dl_request_keeps_explicit_range_with_post_filter(project_
         date_to="2026-02-01",
     )
 
-    assert request.command[request.command.index("--range") + 1] == "1-123"
+    assert request.command[request.command.index("--post-range") + 1] == "1-123"
     assert "--post-filter" in request.command
     assert "--terminate" not in request.command
 
@@ -286,7 +263,7 @@ def test_dry_run_logs_date_filter_hint(project_tmp_path):
 
     assert result is None
     popen_mock.assert_not_called()
-    assert DATE_FILTER_FALLBACK_HINT in logs
+    assert "Instagram author page limit: 10 pages per task." in logs
 
 
 def test_run_gallery_dl_calls_subprocess_with_proxy_env(project_tmp_path):

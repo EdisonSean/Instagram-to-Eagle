@@ -171,7 +171,8 @@ def test_build_script_copies_release_assets_but_not_user_data() -> None:
     assert "--collect-submodules\", \"gallery_dl.downloader" in script
     assert "--collect-submodules\", \"gallery_dl.postprocessor" in script
     assert "FROZEN_GALLERY_DL_MODULE_ARG" in script
-    assert "gallery_dl.main()" in script
+    assert "gallerydl_policy import main as gallery_dl_main" in script
+    assert "gallery_dl_main()" in script
     assert "$MinimumGalleryDlVersion = [version]\"1.32.1\"" in script
     assert "py -m gallery_dl --version" in script
     assert "py -m yt_dlp --version" in script

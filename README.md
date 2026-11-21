@@ -64,7 +64,7 @@ Notes:
 
 - GUI Sync and Settings pages for daily use.
 - Single-post sync for `/p/`, `/reel/`, and `/tv/` URLs.
-- Author-profile sync with unlimited, recent N posts, or date-range modes.
+- Author-profile sync with a 10-page limit, recent N posts, or date-range modes.
 - Automatic Instagram URL normalization: query strings and fragments are removed.
 - Login methods: `cookies.txt`, experimental browser-cookie reading, or no-login mode.
 - Proxy modes: auto-detect system proxy, manual proxy, or no proxy.
@@ -200,10 +200,10 @@ Use only one of `--folder-id` and `--folder-path`.
 
 ### Author Profile Sync Range
 
-Author Profile mode supports three ranges:
+Author Profile mode supports these ranges:
 
-- Unlimited: no `--range` is passed; gallery-dl fetches all accessible content.
-- Recent N posts: `--max-posts N` is converted to gallery-dl `--range 1-N`.
+- Up to 10 pages per author task. The limit includes pages that contain no matching posts.
+- Recent N posts: `--max-posts N` counts posts, including posts with multiple media files. The page limit still applies.
 - Date range: `--date-from` and `--date-to` generate gallery-dl date filters.
 
 CLI examples:
@@ -216,7 +216,7 @@ py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --fo
 
 `max_posts = -1` means unlimited. `max_posts = 0` or values below `-1` are invalid and produce a friendly error.
 
-In the GUI, Date Range mode uses an end date plus Day / Week / Month / Year range to calculate start and end dates. Default max posts is `-1`.
+In the GUI, Date Range mode uses an end date plus Day / Week / Month / Year range to calculate start and end dates. A max-posts value of `-1` uses the author page limit without a separate post count.
 
 ### URL Normalization
 
@@ -374,17 +374,7 @@ Without arguments, the script does not copy `tools/gallery-dl.exe`; it uses the 
 
 If `gallery-dl.exe` is missing, the script prints an optional warning and the packaged app uses the bundled `gallery_dl` module. If `yt-dlp.exe` is missing, the script prints an optional warning, but the bundled `yt_dlp` Python module is still available to gallery-dl.
 
-Runtime `gallery-dl` lookup order:
-
-1. Explicit `gallery_dl_executable` in config
-2. Packaged environment: `tools/gallery-dl.exe`
-3. Packaged environment: `gallery-dl.exe`
-4. Packaged environment fallback: bundled `gallery_dl` Python module
-5. Development environment: `tools/gallery-dl.exe`
-6. Development environment: `gallery-dl.exe`
-7. Development environment fallback: `py -m gallery_dl`
-
-The packaged app does not fall back to the user's system `py -m gallery_dl`, so ordinary users still do not need Python or gallery-dl.
+Instagram tasks use the protected Python-module runner, bundled in the packaged app. The request interval is shared across tasks. The batch stops when a response reports rate limiting or requires account verification. Use `py -m gallery_dl` in `gallery_dl_executable` for the default protected launcher.
 
 Runtime `yt-dlp` lookup order:
 
@@ -585,7 +575,7 @@ Instagram to Eagle/
 
 - GUI 同步页和设置页，适合日常使用。
 - 单帖同步：支持 `/p/`、`/reel/`、`/tv/` 链接。
-- 作者主页同步：支持不限制数量、最近 N 条、按时间范围同步。
+- 作者主页同步支持最多 10 页、最近 N 条和按时间范围三种模式。
 - Instagram URL 自动规范化：自动清理 query 和 fragment。
 - 登录方式：`cookies.txt`、实验性浏览器读取、不登录模式。
 - 代理模式：自动检测系统代理、手动代理、不使用代理。
@@ -722,8 +712,8 @@ py -m ins_eagle_sync.cli sync-post "https://www.instagram.com/p/DYld7hQCT90/" --
 
 作者主页模式支持三种范围：
 
-- 不限制数量：不传 `--range`，会抓取所有 gallery-dl 可访问的内容。
-- 最近 N 条：传 `--max-posts N`，内部会给 gallery-dl 传 `--range 1-N`。
+- 每次同步一个作者时最多查询 10 页。没有符合日期的帖子的页面也计入上限。
+- 最近 N 条：通过 `--max-posts N` 按帖子计数，一条多图帖子也只计一次，同时遵守翻页上限。
 - 按时间范围：传 `--date-from` / `--date-to`，内部会生成 gallery-dl 时间过滤参数。
 
 CLI 示例：
@@ -734,7 +724,7 @@ py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --fo
 py -m ins_eagle_sync.cli sync-author "https://www.instagram.com/quinn.xyz/" --folder-id "YOUR_EAGLE_FOLDER_ID" --date-from 2026-04-01 --date-to 2026-05-01
 ```
 
-`max_posts = -1` 表示不限制数量。`max_posts = 0` 或小于 `-1` 会被视为无效配置并友好报错。
+`max_posts = -1` 表示只使用翻页上限。`max_posts = 0` 或小于 `-1` 会被视为无效配置并友好报错。
 
 GUI 中“按时间范围”使用结束日期和“天 / 周 / 月 / 年”范围计算起止日期；“最多同步帖子数”默认是 `-1`。
 
@@ -894,17 +884,7 @@ dist/
 
 如果 `gallery-dl.exe` 缺失，脚本会输出可选 warning，发布包会使用内置的 `gallery_dl` Python 模块下载。如果 `yt-dlp.exe` 缺失，脚本会输出可选 warning，但 gallery-dl 仍可使用内置的 `yt_dlp` Python 模块。
 
-`gallery-dl` 运行时查找策略：
-
-1. 配置中显式设置的 `gallery_dl_executable`
-2. 打包环境：`tools/gallery-dl.exe`
-3. 打包环境：`gallery-dl.exe`
-4. 打包环境 fallback：主程序内置的 `gallery_dl` Python 模块
-5. 开发环境：`tools/gallery-dl.exe`
-6. 开发环境：`gallery-dl.exe`
-7. 开发环境 fallback：`py -m gallery_dl`
-
-打包环境不会 fallback 到用户系统里的 `py -m gallery_dl`，因此普通用户仍然不需要安装 Python 或 gallery-dl。
+Instagram 任务使用带请求保护的 Python 模块。打包版已附带该模块。各任务共用请求间隔。遇到限流或账号验证时，程序会停止整批任务。`gallery_dl_executable` 使用默认的 `py -m gallery_dl` 即可。
 
 `yt-dlp` 运行时查找策略：
 

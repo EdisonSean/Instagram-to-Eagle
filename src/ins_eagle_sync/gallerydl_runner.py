@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import queue
 import subprocess
 import threading
@@ -9,8 +10,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import AppConfig, resolve_gallery_dl_command, resolve_ytdlp_command
+from .config import AppConfig, resolve_protected_gallery_dl_command, resolve_ytdlp_command
+from .gallerydl_policy import AUTHOR_PAGE_LIMIT, RESTRICTED_EXIT_CODE, parse_request_interval
 from .proxy_utils import build_proxy_env
+from .runtime import is_frozen
 from .utils import InstagramMode, detect_instagram_url
 
 
@@ -21,16 +24,9 @@ NO_OUTPUT_POLL_SECONDS = 0.2
 GALLERY_DL_CANCELLED_RETURN_CODE = -15
 GALLERY_DL_CANCELLED_HINT = "已请求停止，正在终止 gallery-dl。"
 GALLERY_DL_KILLED_HINT = "gallery-dl 未及时退出，已强制结束。"
-DATE_FILTER_FALLBACK_MAX_POSTS = 500
-DATE_FILTER_FALLBACK_TERMINATE_SKIPS = 20
 CDN_TIMEOUT_HINT = "Instagram CDN 下载超时，gallery-dl 正在重试，可能与网络或代理有关。"
 STILL_RUNNING_HINT = "下载仍在进行。"
 POSSIBLY_STUCK_HINT = "可能卡住。"
-DATE_FILTER_FALLBACK_HINT = (
-    "提示：为避免 Instagram 置顶旧帖触发原生日期停止，将使用时间过滤 + 最近 "
-    f"{DATE_FILTER_FALLBACK_MAX_POSTS} 条安全上限，并在连续跳过 "
-    f"{DATE_FILTER_FALLBACK_TERMINATE_SKIPS} 个旧文件后停止，避免作者主页翻页卡住。"
-)
 YTDLP_MISSING_HINT = (
     "提示：gallery-dl 无法导入 yt-dlp / youtube-dl Python 模块。"
     "如果你正在使用打包版，请重新使用新版打包脚本封包；如果你正在开发环境运行，请安装 yt-dlp。"
@@ -107,36 +103,35 @@ def build_gallery_dl_command(
     date_to = _optional_date_filter(date_to, "date_to")
     if info.mode == InstagramMode.AUTHOR and (effective_max_posts == 0 or effective_max_posts < -1):
         raise ValueError("max_posts must be -1 or greater than 0")
-    command = resolve_gallery_dl_command(config)
-    if not command:
-        raise RuntimeError("未找到 gallery-dl，无法下载。请确认发布包完整。")
-    command.append("--config-ignore")
+    command = build_protected_gallery_dl_command(config)
     if verbose:
         command.append("--verbose")
-    command.extend(build_cookie_args(config))
     command.append("--write-metadata")
     if not ignore_archive:
         command.extend(["--download-archive", str(config.archive_db)])
-    command.extend(["--sleep-request", config.download.sleep_request])
-    range_was_added = False
     if info.mode == InstagramMode.AUTHOR and effective_max_posts != -1:
-        command.extend(["--range", f"1-{effective_max_posts}"])
-        range_was_added = True
-    if info.mode == InstagramMode.AUTHOR:
         if date_from or date_to:
-            post_filter = build_gallery_dl_date_filter(date_from=date_from, date_to=date_to)
-            if post_filter:
-                command.extend(["--post-filter", post_filter])
-                fallback_range_was_added = False
-                if not range_was_added:
-                    command.extend(["--range", f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}"])
-                    fallback_range_was_added = True
-                if should_terminate_date_filter_fallback(
-                    date_from=date_from,
-                    fallback_range_was_added=fallback_range_was_added,
-                ):
-                    command.extend(["--terminate", str(DATE_FILTER_FALLBACK_TERMINATE_SKIPS)])
+            command.extend(["--post-range", f"1-{effective_max_posts}"])
+        else:
+            command.extend(["-o", f"extractor.instagram.max-posts={effective_max_posts}"])
+    if info.mode == InstagramMode.AUTHOR and (date_from or date_to):
+        post_filter = build_gallery_dl_date_filter(date_from=date_from, date_to=date_to)
+        command.extend(["--post-filter", post_filter])
     command.extend(["--directory", str(target_dir), url])
+    return command
+
+
+def build_protected_gallery_dl_command(config: AppConfig) -> list[str]:
+    parse_request_interval(config.download.sleep_request)
+    command = resolve_protected_gallery_dl_command(config)
+    command.extend([
+        config.download.sleep_request,
+        "--config-ignore",
+        "-o", "extractor.cookies-update=false",
+        "-o", "extractor.instagram.api=rest",
+        "-o", "extractor.instagram.sleep-request=0",
+    ])
+    command.extend(build_cookie_args(config))
     return command
 
 
@@ -151,18 +146,6 @@ def build_cookie_args(config: AppConfig) -> list[str]:
         return ["--cookies-from-browser", config.cookies.from_browser]
 
     raise ValueError("cookies.enabled is true, but no cookies.file or cookies.from_browser is configured")
-
-
-def command_uses_date_filter_fallback(command: list[str]) -> bool:
-    return "--post-filter" in command and f"1-{DATE_FILTER_FALLBACK_MAX_POSTS}" in command
-
-
-def should_terminate_date_filter_fallback(
-    *,
-    date_from: str | None,
-    fallback_range_was_added: bool,
-) -> bool:
-    return bool(date_from and fallback_range_was_added)
 
 
 def run_gallery_dl(
@@ -188,8 +171,8 @@ def run_gallery_dl(
         date_to=date_to,
     )
     log_gallery_dl_request(request, dry_run=dry_run, log=log)
-    if command_uses_date_filter_fallback(request.command):
-        log(DATE_FILTER_FALLBACK_HINT)
+    if request.mode == InstagramMode.AUTHOR.value:
+        log(f"Instagram author page limit: {AUTHOR_PAGE_LIMIT} pages per task.")
 
     missing_cookie_result = validate_cookie_file(config, request, dry_run=dry_run, log=log)
     if missing_cookie_result is not None:
@@ -214,6 +197,7 @@ def run_subprocess_realtime(
     env: dict[str, str] | None,
     log: LogFn,
     cancel_event: Any | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     process = subprocess.Popen(
         command,
@@ -222,6 +206,8 @@ def run_subprocess_realtime(
         text=True,
         env=env,
         bufsize=1,
+        encoding="utf-8",
+        errors="replace",
     )
     events: queue.Queue[tuple[str, str | None]] = queue.Queue()
     stdout_lines: list[str] = []
@@ -241,12 +227,17 @@ def run_subprocess_realtime(
     stuck_logged = False
     finished_streams = 0
     last_output_at = time.monotonic()
+    deadline = None if timeout is None else last_output_at + timeout
     cancellation_requested = False
+    timed_out = False
 
     while True:
-        if _event_is_set(cancel_event) and not cancellation_requested:
+        deadline_reached = deadline is not None and time.monotonic() >= deadline and process.poll() is None
+        if not cancellation_requested and (_event_is_set(cancel_event) or deadline_reached):
             cancellation_requested = True
-            log(GALLERY_DL_CANCELLED_HINT)
+            timed_out = deadline_reached
+            if not timed_out:
+                log(GALLERY_DL_CANCELLED_HINT)
             try:
                 process.terminate()
             except Exception:  # noqa: BLE001 - the process may already have exited.
@@ -308,7 +299,9 @@ def run_subprocess_realtime(
             returncode = process.wait()
     else:
         returncode = process.wait()
-    if cancellation_requested and returncode == 0:
+    if timed_out:
+        raise subprocess.TimeoutExpired(command, timeout)
+    if cancellation_requested and returncode != RESTRICTED_EXIT_CODE:
         returncode = GALLERY_DL_CANCELLED_RETURN_CODE
     return subprocess.CompletedProcess(
         args=command,
@@ -368,16 +361,14 @@ def validate_cookie_file(
     )
 
 
-def build_subprocess_env(config: AppConfig) -> dict[str, str] | None:
-    mode = getattr(config.proxy, "mode", "manual" if config.proxy.enabled else "none")
-    if mode == "manual" and not config.proxy.http_proxy and not config.proxy.https_proxy:
-        env = build_proxy_env(config.proxy)
-    elif mode in {"auto", "manual", "none"}:
-        env = build_proxy_env(config.proxy)
-    elif not config.proxy.enabled:
-        env = build_proxy_env(config.proxy)
-    else:
-        env = build_proxy_env(config.proxy)
+def build_subprocess_env(config: AppConfig) -> dict[str, str]:
+    env = build_proxy_env(config.proxy)
+    env["PYTHONIOENCODING"] = "utf-8"
+    if not is_frozen():
+        python_paths = [str(Path(__file__).resolve().parents[1])]
+        if env.get("PYTHONPATH"):
+            python_paths.append(env["PYTHONPATH"])
+        env["PYTHONPATH"] = os.pathsep.join(python_paths)
     return _add_ytdlp_tools_to_path(env, config)
 
 
@@ -491,14 +482,14 @@ def is_ytdlp_missing_warning(text: str) -> bool:
     return "cannot import yt-dlp or youtube-dl" in lowered
 
 
-def _add_ytdlp_tools_to_path(env: dict[str, str] | None, config: AppConfig) -> dict[str, str] | None:
+def _add_ytdlp_tools_to_path(env: dict[str, str], config: AppConfig) -> dict[str, str]:
     ytdlp_command = resolve_ytdlp_command(config)
     if not ytdlp_command or len(ytdlp_command) != 1:
         return env
     executable = Path(ytdlp_command[0])
     if executable.name.lower() != "yt-dlp.exe" or not executable.exists():
         return env
-    updated = dict(env or {})
+    updated = dict(env)
     current_path = updated.get("PATH", "")
     tool_dir = str(executable.parent)
     updated["PATH"] = f"{tool_dir};{current_path}" if current_path else tool_dir

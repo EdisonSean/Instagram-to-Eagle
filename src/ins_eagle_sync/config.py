@@ -122,6 +122,22 @@ def resolve_gallery_dl_command(config: AppConfig) -> list[str]:
     return split_command(DEFAULT_GALLERY_DL_EXECUTABLE)
 
 
+def resolve_protected_gallery_dl_command(config: AppConfig) -> list[str]:
+    configured = str(config.gallery_dl_executable or "").strip()
+    if not configured or _is_default_gallery_dl_executable(configured):
+        if is_frozen():
+            return [sys.executable, FROZEN_GALLERY_DL_MODULE_ARG]
+        configured = DEFAULT_GALLERY_DL_EXECUTABLE
+
+    command = split_command(configured)
+    if len(command) >= 3 and command[-2:] == ["-m", "gallery_dl"]:
+        return [*command[:-1], "ins_eagle_sync.gallerydl_policy"]
+    raise ValueError(
+        "Instagram request protection requires the gallery-dl Python module. "
+        "Set gallery_dl_executable to 'py -m gallery_dl' to use the protected downloader."
+    )
+
+
 def resolve_ytdlp_command(config: AppConfig) -> list[str] | None:
     configured = str(config.yt_dlp_executable or "").strip()
     if configured:

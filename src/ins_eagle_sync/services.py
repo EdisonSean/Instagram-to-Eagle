@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from .config import AppConfig
 from .eagle_client import EagleClient
+from .gallerydl_policy import BUSY_EXIT_CODE, POLICY_ERROR_EXIT_CODE, RESTRICTED_EXIT_CODE
 from .gallerydl_runner import build_gallery_dl_request, run_gallery_dl
 from .importer import import_staging_items, verify_import_records
 from .metadata_parser import ImportItem, scan_staging_dir
@@ -222,8 +223,13 @@ def sync_posts(
         failures.extend(result.get("failures", []) or [])
         if not result.get("ok", False):
             ok = False
+            task_returncode = result.get("returncode")
+            if task_returncode in (RESTRICTED_EXIT_CODE, BUSY_EXIT_CODE, POLICY_ERROR_EXIT_CODE):
+                returncode = task_returncode
+                logger(f"Instagram batch stopped. {len(normalized_urls) - index} links were not attempted.")
+                break
             if returncode is None:
-                returncode = result.get("returncode")
+                returncode = task_returncode
         if result.get("cancelled") or _is_cancelled(cancel_event):
             return _service_result(
                 False,
@@ -292,9 +298,7 @@ def sync_author(
     except ValueError as exc:
         logger(f"error: {exc}")
         return _service_result(False, messages=messages)
-    if effective_max_posts == -1:
-        logger("作者主页模式：不限制抓取数量")
-    else:
+    if effective_max_posts != -1:
         logger(f"作者主页模式：最多抓取 {effective_max_posts} 条")
     if date_from or date_to:
         logger(f"作者主页模式：时间范围 {date_from or '不限'} 到 {date_to or '不限'}")

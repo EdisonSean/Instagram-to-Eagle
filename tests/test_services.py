@@ -197,6 +197,26 @@ def test_sync_posts_service_accepts_multiple_post_urls(project_tmp_path):
     assert any("共 2 个帖子链接" in message for message in logs)
 
 
+def test_batch_stops_at_first_instagram_restriction(project_tmp_path):
+    from ins_eagle_sync.gallerydl_policy import RESTRICTED_EXIT_CODE
+
+    config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
+    with patch(
+        "ins_eagle_sync.services.sync_post",
+        side_effect=[{"ok": False, "returncode": 1}, {"ok": False, "returncode": RESTRICTED_EXIT_CODE}],
+    ) as sync_mock:
+        result = services.sync_posts(
+            config,
+            "https://www.instagram.com/p/FIRST/ https://www.instagram.com/p/SECOND/ https://www.instagram.com/p/THIRD/",
+        )
+
+    assert sync_mock.call_count == 2
+    assert result["ok"] is False
+    assert result["returncode"] == RESTRICTED_EXIT_CODE
+    assert result["failed"] == 2
+    assert any("1 links were not attempted" in line for line in result["messages"])
+
+
 def test_sync_posts_service_rejects_author_urls(project_tmp_path):
     config = write_test_config(project_tmp_path / "config.json", project_tmp_path)
 
@@ -284,7 +304,6 @@ def test_sync_author_service_allows_unlimited_max_posts(project_tmp_path):
     assert result["ok"] is True
     assert request_mock.call_args.kwargs["max_posts"] == -1
     assert run_mock.call_args.kwargs["max_posts"] == -1
-    assert "作者主页模式：不限制抓取数量" in logs
 
 
 def test_sync_author_service_rejects_invalid_max_posts(project_tmp_path):

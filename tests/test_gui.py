@@ -913,7 +913,7 @@ def test_login_check_hides_cookie_path(project_tmp_path) -> None:
     config = load_config(config_path)
     completed = SimpleNamespace(returncode=4, stdout="", stderr=f"Failed to load {cookie_path}")
 
-    with patch("ins_eagle_sync.gui.subprocess.run", return_value=completed):
+    with patch("ins_eagle_sync.gui.run_subprocess_realtime", return_value=completed):
         messages = gui.run_instagram_login_check(config)
 
     joined = "\n".join(messages)
@@ -937,6 +937,7 @@ def test_login_check_no_login_mode_omits_cookie_args(project_tmp_path) -> None:
 
     assert "--cookies" not in command
     assert "--cookies-from-browser" not in command
+    assert config.download.sleep_request in command
 
 
 def test_cookie_setup_guide_shows_for_no_login_mode(project_tmp_path) -> None:
@@ -1066,7 +1067,7 @@ def test_login_check_browser_command_log_hides_profile(project_tmp_path) -> None
     config = load_config(config_path)
     completed = SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    with patch("ins_eagle_sync.gui.subprocess.run", return_value=completed):
+    with patch("ins_eagle_sync.gui.run_subprocess_realtime", return_value=completed):
         messages = gui.run_instagram_login_check(config)
 
     joined = "\n".join(messages)
@@ -1091,7 +1092,7 @@ def test_browser_login_check_failure_suggests_closing_browser(project_tmp_path) 
         stderr="[cookies][warning] Failed to decrypt cookie (DPAPI)",
     )
 
-    with patch("ins_eagle_sync.gui.subprocess.run", return_value=completed):
+    with patch("ins_eagle_sync.gui.run_subprocess_realtime", return_value=completed):
         messages = gui.run_instagram_login_check(config)
 
     assert any("关闭浏览器后重试" in message for message in messages)
@@ -1114,7 +1115,7 @@ def test_login_redirect_generates_friendly_hint(project_tmp_path) -> None:
         stderr="[instagram][error] HTTP redirect to login page (https://www.instagram.com/accounts/login/)",
     )
 
-    with patch("ins_eagle_sync.gui.subprocess.run", return_value=completed):
+    with patch("ins_eagle_sync.gui.run_subprocess_realtime", return_value=completed):
         messages = gui.run_instagram_login_check(config)
 
     assert any(gui.FRIENDLY_LOGIN_FAILURE_HINT in message for message in messages)

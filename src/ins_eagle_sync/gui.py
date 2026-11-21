@@ -33,7 +33,15 @@ from .config import (
     split_command,
 )
 from .eagle_client import EagleClient
-from .gallerydl_runner import build_cookie_args, build_subprocess_env, format_command_for_log, is_browser_cookie_error
+from .gallerydl_policy import AUTHOR_PAGE_LIMIT, RESTRICTED_EXIT_CODE
+from .gallerydl_runner import (
+    GALLERY_DL_CANCELLED_RETURN_CODE,
+    build_protected_gallery_dl_command,
+    build_subprocess_env,
+    format_command_for_log,
+    is_browser_cookie_error,
+    run_subprocess_realtime,
+)
 from .proxy_utils import detect_system_proxy, normalize_proxy_url, proxy_mode_label
 from .runtime import (
     APP_ICON_RELATIVE_PATH,
@@ -95,7 +103,7 @@ DATE_RANGE_WEEK = "周"
 DATE_RANGE_MONTH = "月"
 DATE_RANGE_YEAR = "年"
 DATE_RANGE_VALUES = (DATE_RANGE_DAY, DATE_RANGE_WEEK, DATE_RANGE_MONTH, DATE_RANGE_YEAR)
-AUTHOR_SYNC_UNLIMITED = "不限制数量"
+AUTHOR_SYNC_UNLIMITED = f"最多 {AUTHOR_PAGE_LIMIT} 页"
 AUTHOR_SYNC_RECENT = "最近 N 条"
 AUTHOR_SYNC_DATE_RANGE = "按时间范围"
 AUTHOR_SYNC_RANGE_VALUES = (AUTHOR_SYNC_UNLIMITED, AUTHOR_SYNC_RECENT, AUTHOR_SYNC_DATE_RANGE)
@@ -156,7 +164,7 @@ EN_TEXT: dict[str, str] = {
     DATE_RANGE_WEEK: "Week",
     DATE_RANGE_MONTH: "Month",
     DATE_RANGE_YEAR: "Year",
-    AUTHOR_SYNC_UNLIMITED: "Unlimited",
+    AUTHOR_SYNC_UNLIMITED: f"Up to {AUTHOR_PAGE_LIMIT} pages",
     AUTHOR_SYNC_RECENT: "Recent N posts",
     AUTHOR_SYNC_DATE_RANGE: "Date range",
     STATUS_READY: "Ready",
@@ -291,7 +299,6 @@ LOG_EN_TEXT: dict[str, str] = {
     "提示：HTTPS 代理为空，已自动使用 HTTP 代理。": "Note: HTTPS proxy is empty; using the HTTP proxy automatically.",
     "提示：手动代理未填写，将直接连接网络。": "Note: Manual proxy is empty; connecting directly.",
     "提示：当前设置为不使用代理。": "Note: Proxy is disabled.",
-    "作者主页模式：不限制抓取数量": "Author Profile mode: unlimited post capture.",
     "错误：默认最多同步帖子数必须是数字。": "Error: Default max author posts must be a number.",
     "错误：默认最多同步帖子数必须是 -1 或大于 0 的数字。": "Error: Default max author posts must be -1 or a number greater than 0.",
     "错误：请求间隔不能为空。": "Error: Request interval cannot be empty.",
@@ -2013,7 +2020,7 @@ class InsEagleSyncApp(_BaseWindow):
         url = url_values[0] if url_values else DEFAULT_LOGIN_TEST_URL
 
         def task() -> dict[str, Any]:
-            messages = run_instagram_login_check(config, url)
+            messages = run_instagram_login_check(config, url, cancel_event=self.cancel_event)
             for message in messages:
                 self._queue_log(message)
             failed = any(message.startswith("警告：") or message.startswith("错误：") for message in messages)
@@ -3523,7 +3530,9 @@ def _localize_log_fragment(text: str) -> str:
     return result
 
 
-def run_instagram_login_check(config: AppConfig, url: str = DEFAULT_LOGIN_TEST_URL) -> list[str]:
+def run_instagram_login_check(
+    config: AppConfig, url: str = DEFAULT_LOGIN_TEST_URL, *, cancel_event: Any | None = None
+) -> list[str]:
     messages: list[str] = []
     try:
         command = build_login_check_command(config, url)
@@ -3532,13 +3541,12 @@ def run_instagram_login_check(config: AppConfig, url: str = DEFAULT_LOGIN_TEST_U
 
     messages.append(f"登录测试命令：{format_command_for_log(command)}")
     try:
-        result = subprocess.run(
+        result = run_subprocess_realtime(
             command,
-            check=False,
-            capture_output=True,
-            text=True,
             timeout=45,
             env=build_subprocess_env(config),
+            cancel_event=cancel_event,
+            log=lambda _message: None,
         )
     except Exception as exc:  # noqa: BLE001 - user-facing diagnostics.
         return [
@@ -3546,6 +3554,8 @@ def run_instagram_login_check(config: AppConfig, url: str = DEFAULT_LOGIN_TEST_U
             sanitize_log_message(f"错误：登录测试失败：{exc}", config=config),
         ]
 
+    if result.returncode == GALLERY_DL_CANCELLED_RETURN_CODE:
+        return [sanitize_log_message(message, config=config) for message in messages]
     stderr = (result.stderr or "").strip()
     stdout = (result.stdout or "").strip()
     if result.returncode == 0:
@@ -3553,18 +3563,15 @@ def run_instagram_login_check(config: AppConfig, url: str = DEFAULT_LOGIN_TEST_U
     else:
         detail = stderr or stdout or f"gallery-dl 退出码 {result.returncode}"
         messages.append(f"警告：登录测试未通过：{detail}")
-        if should_show_login_failure_hint(detail):
+        if result.returncode != RESTRICTED_EXIT_CODE and should_show_login_failure_hint(detail):
             messages.append(FRIENDLY_LOGIN_FAILURE_HINT)
     return [sanitize_log_message(message, config=config) for message in messages]
 
 
 def build_login_check_command(config: AppConfig, url: str) -> list[str]:
-    command = resolve_gallery_dl_command(config)
-    if not command:
-        raise RuntimeError("未找到 gallery-dl，无法测试 Instagram 登录状态。")
-    command.append("--config-ignore")
-    command.extend(build_cookie_args(config))
-    command.extend(["--simulate", "--range", "1-1", url or DEFAULT_LOGIN_TEST_URL])
+    command = build_protected_gallery_dl_command(config)
+    target = detect_instagram_url(url or DEFAULT_LOGIN_TEST_URL).normalized_url
+    command.extend(["--simulate", "--range", "1-1", target])
     return command
 
 
